@@ -14,9 +14,9 @@ fn main() {
   let mut parse_code = "
     let string_variable = \"string_literal\";
     let b = 'a';
-    let c = 4.123 + 5;
+    let c = 4.123 + 5 / 3 * 3 - 0.1;
     @builtin
-    fn print (arg)
+    fn print (arg);
     ".to_string();
   parse_to_token(&mut read_token, unsafe { parse_code.as_bytes_mut() });
 

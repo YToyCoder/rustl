@@ -41,6 +41,7 @@ pub enum AstKind {
   AstName(String),
   BinaryOp(String, Box<Expr>, Box<Expr>),
   FnDeclAst(Option<Box<Expr>>, String, Box<Expr>),
+  FnDeclArgs(Vec<Box<Expr>>),
   RustlAnnotation(String),
   AstNull
 }
@@ -139,6 +140,7 @@ impl Parser
     let token_typ = token.token_t;
     let res =  match token_typ {
       lexer::TokenTyp::TokenLet => self.parse_decl(ctx),
+      lexer::TokenTyp::TokenFnDecl => self.parse_fn_decl(ctx),
       lexer::TokenTyp::TokenRustlAnnotation => self.parse_rustl_annotation(ctx),
       _ => self.parse_binary_expression(ctx),
     }?;
@@ -274,9 +276,37 @@ impl Parser
   }
 
   fn parse_fn_decl_arg(& mut self , ctx: &mut ParsingCtx)  -> ParsingResult {
-    let left_parent = ctx.expect_cur_token(TokenTyp::TokenLParenthesis)?;
+    let _left_parent = ctx.expect_cur_token(TokenTyp::TokenLParenthesis)?;
     ctx.consume_cur_token();
-    Err(":".to_string())
+
+    let mut arg_decl_list: Vec<Box<Expr>> = vec![];
+
+    loop {
+      if !ctx.has_token() {
+        break;
+      }
+
+      let Ok(token ) = ctx.expect_cur_token(TokenTyp::TokenName) else {
+        break;
+      };
+      let arg_name = token.token_value.clone();
+      ctx.consume_cur_token();
+
+      arg_decl_list.push(Box::new(Expr{kind: AstKind::AstName(arg_name)}));
+      if !ctx.has_token() {
+        break;
+      }
+
+      if ctx.get_cur_token().unwrap().token_t != TokenTyp::TokenComma {
+        break;
+      }
+    }
+
+    ctx.expect_cur_token(TokenTyp::TokenRParenthesis)?;
+
+    ctx.consume_cur_token();
+
+    Ok( Box::new(Expr{kind: AstKind::FnDeclArgs(arg_decl_list)}) )
   }
 
 }

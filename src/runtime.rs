@@ -46,6 +46,37 @@ pub enum RustlValueTyp {
   RustlString
 }
 
+macro_rules! numeric_op_define {
+  ($op:tt $name:tt) => {
+    pub fn $name(&self, other:& Rc<RustlValue>) -> Option< Rc<RustlValue> >
+    {
+      if !self.is_numeric() || !other.is_numeric() {
+        return None
+      };
+  
+      let add_tag = 
+        match (self.tag, other.tag) {
+          (RustlValueTyp::RustlFloat, _) | 
+          (_, RustlValueTyp::RustlFloat) 
+            => RustlValueTyp::RustlFloat,
+          _ => RustlValueTyp::RustlInt,
+        };
+  
+      match add_tag {
+        RustlValueTyp::RustlFloat => 
+          Some(Rc::new(RustlValue::create_float(
+            self.to_float()? $op other.to_float()?
+          ))), 
+        RustlValueTyp::RustlInt => 
+          Some(Rc::new(RustlValue::create_int(
+            self.to_int_value()? $op other.to_int_value()?
+          ))), 
+        _ => None
+      }
+    }
+  };
+}
+
 pub struct RustlValue 
 {
   tag: RustlValueTyp,
@@ -121,32 +152,10 @@ impl RustlValue {
     }
   }
 
-  pub fn numeric_add(&self, other:& Rc<RustlValue>) -> Option< Rc<RustlValue> >
-  {
-    if !self.is_numeric() || !other.is_numeric() {
-      return None
-    };
-
-    let add_tag = 
-      match (self.tag, other.tag) {
-        (RustlValueTyp::RustlFloat, _) | 
-        (_, RustlValueTyp::RustlFloat) 
-          => RustlValueTyp::RustlFloat,
-        _ => RustlValueTyp::RustlInt,
-      };
-
-    match add_tag {
-      RustlValueTyp::RustlFloat => 
-        Some(Rc::new(RustlValue::create_float(
-          self.to_float()? + other.to_float()?
-        ))), 
-      RustlValueTyp::RustlInt => 
-        Some(Rc::new(RustlValue::create_int(
-          self.to_int_value()? + other.to_int_value()?
-        ))), 
-      _ => None
-    }
-  }
+  numeric_op_define! { +  numeric_add }
+  numeric_op_define! { -  numeric_sub }
+  numeric_op_define! { *  numeric_multi }
+  numeric_op_define! { /  numeric_div }
 }
 
 impl Debug for RustlValue {
@@ -261,7 +270,7 @@ fn create_numeric_value_from_ast(ast:&Box<Expr>) -> Option<RustlValue>
   let AstKind::NumericLiteral(ref numeric_string) = ast.kind else {
     return None;
   };
-  
+
   match numeric_string.find('.') 
   {
     Some(_) => 
@@ -298,11 +307,18 @@ fn eval_expression(ast:& Box<Expr>, cur_scope: &mut EvalScope, nil: Rc<RustlValu
       let rhs_value = eval_expression(rhs, cur_scope, nil.clone())?;
       if op_string.eq("+") {
         return rustl_add(&lhs_value, &rhs_value);
+      } else if op_string.eq("*") {
+        return lhs_value.numeric_multi(&rhs_value);
+      } else if op_string.eq("/") {
+        return lhs_value.numeric_div(&rhs_value);
+      }else if op_string.eq("-") {
+        return lhs_value.numeric_sub(&rhs_value);
       }
       None
     },
-    AstKind::FnDeclAst(_, _, _) => todo!(),
-    AstKind::RustlAnnotation(_) => todo!(),
-    AstKind::AstNull => todo!(),
+    AstKind::FnDeclAst(_, _, _) => None,
+    AstKind::RustlAnnotation(_) =>  None,
+    AstKind::AstNull => None,
+    AstKind::FnDeclArgs(_) => None,
   }
 }
