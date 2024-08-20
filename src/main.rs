@@ -19,6 +19,7 @@ fn main() {
     fn print (arg);
     let d = string_variable + \"44\";
     print(d);
+    print(c);
     ".to_string();
   parse_to_token(&mut read_token, unsafe { parse_code.as_bytes_mut() });
 

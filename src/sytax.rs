@@ -157,12 +157,13 @@ impl Parser
       lexer::TokenTyp::TokenLet => self.parse_decl(ctx),
       lexer::TokenTyp::TokenFnDecl => self.parse_fn_decl(ctx),
       lexer::TokenTyp::TokenRustlAnnotation => self.parse_rustl_annotation(ctx),
-      _ =>{
+      _ => {
         if ctx.next_token_typ(&[TokenTyp::TokenName, TokenTyp::TokenLParenthesis]) {
           // parse to call
-          return self.parse_fn_call(ctx);
+          self.parse_fn_call(ctx)
+        }else {
+          self.parse_binary_expression(ctx)
         }
-        self.parse_binary_expression(ctx)
       },
     }?;
 
@@ -254,7 +255,7 @@ impl Parser
         Ok(AstKind::CharLiteral(token.token_value.clone())) , 
       lexer::TokenTyp::TokenStringLiteral => 
         Ok(AstKind::StringLiteral(token.token_value.clone())) , 
-      _ => Err("")
+      _ => Err(format!( "parsing expression one token not match any token{token:#?}"))
     }?;
 
     ctx.consume_cur_token();
@@ -357,8 +358,9 @@ impl Parser
     }
 
     if !ctx.next_token_typ(&[TokenTyp::TokenRParenthesis]) {
-      return Err("".to_string())
+      return Err("function call parsing has no RParenthesis".to_string())
     }
+
     ctx.consume_cur_token();
 
     Ok(Box::new(Expr{kind: AstKind::FnCall(call_identifier, call_args)}))
