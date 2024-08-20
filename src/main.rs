@@ -17,6 +17,8 @@ fn main() {
     let c = 4.123 + 5 / 3 * 3 - 0.1;
     @builtin
     fn print (arg);
+    let d = string_variable + \"44\";
+    print(d);
     ".to_string();
   parse_to_token(&mut read_token, unsafe { parse_code.as_bytes_mut() });
 
@@ -24,12 +26,12 @@ fn main() {
   let mut ctx = sytax::ParsingCtx::new(&read_token);
   // println!("{ctx:#?}");
   parser.parse(&mut ctx);
-  println!("ast: \n{:#?}", parser.root);
+  // println!("ast: \n{:#?}", parser.root);
   let Some(mut ast) = parser.root else {
     return ();
   };
   eval_ast(&mut ast);
-  println!("Hello, world!");
+  // println!("Hello, world!");
 }
 
 // fn read_and_parse(read_token: &mut Vec<lexer::Token>) -> Result<(), Box<dyn std::error::Error>>
@@ -56,6 +58,7 @@ fn parse_to_token(read_token: &mut Vec<lexer::Token>, mut buffer: &mut [u8]) -> 
   {
     let Ok((token , size)) = lexer::Token::parse_from_string(&buffer) else  {
       if !buffer.is_empty() {
+        // println!("not support is char parsing {}", buffer[0]);
         buffer = buffer.split_at_mut(1).1;
         // not support token yet!
         continue;

@@ -158,6 +158,7 @@ impl RustlValue {
   numeric_op_define! { /  numeric_div }
 }
 
+
 impl Debug for RustlValue {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 
@@ -249,20 +250,88 @@ struct EvalScope
   stack_value: HashMap<String, Rc<RustlValue>>,
 }
 
+impl EvalScope {
+  pub fn get_local_variable(&self, name: &String ) -> Option<&Rc<RustlValue>> {
+    self.stack_value.get(name)
+  }
+}
+
+struct RustlCtx {
+  rustl_nil: Rc<RustlValue>,
+  builtin_func: RustlBuiltinFnRegister,
+}
+
+impl RustlCtx {
+  fn get_nil(&self) -> Rc<RustlValue> {
+    self.rustl_nil.clone()
+  }
+}
+
+impl Default for RustlCtx {
+  fn default() -> Self {
+    Self { rustl_nil: Rc::new(RustlValue::create_obj()), builtin_func: Default::default() }
+  }
+}
+
+pub struct RustlArgList {
+  pub args: Vec<Rc<RustlValue>>,
+}
+
+trait RustlBuiltinFn {
+  fn call(&mut self, args:& Vec<Rc<RustlValue>>) -> Rc<RustlValue>;
+
+}
+
+struct RustlBuiltinFnRegister {
+  register_fn: HashMap<String,Box<dyn RustlBuiltinFn>>,
+}
+
+impl Default for RustlBuiltinFnRegister {
+  fn default() -> Self {
+      Self { register_fn: Default::default() }
+  }
+}
+
+impl RustlBuiltinFnRegister {
+  pub fn register(&mut self, name: &String ,f: Box<dyn RustlBuiltinFn>) {
+    self.register_fn.insert(name.to_string(), f);
+  }
+
+  pub fn get_fn(&mut self, name: &String) -> Option<&mut Box<dyn RustlBuiltinFn>> {
+    self.register_fn.get_mut(name)
+  }
+}
+
+struct RustlFnPrint {
+  rustl_nil: Rc<RustlValue>
+}
+
+impl RustlBuiltinFn for RustlFnPrint {
+  fn call(&mut self, args:& Vec<Rc<RustlValue>>) -> Rc<RustlValue> {
+    if args.len() == 0 {
+      println!("");
+    }
+    println!("{}", args.get(0).unwrap().to_string());
+    self.rustl_nil.clone()
+  }
+}
+
 pub fn eval_ast(ast:&mut Expr) -> () {
   let mut root_scope = EvalScope{stack_value: HashMap::new()};
 
-  let rustl_nil = Rc::new(RustlValue::create_obj());
-
+  let mut rustl_eval_ctx = RustlCtx::default();
   let AstKind::ProgramAst(ref statements) = ast.kind else {
     return ();
   };
 
+  let rustl_print = RustlFnPrint{ rustl_nil: rustl_eval_ctx.get_nil() };
+  rustl_eval_ctx.builtin_func.register(&"print".to_string(), Box::new(rustl_print));
+  
   for mut ast_ in statements {
-    eval_expression(&mut ast_, &mut root_scope, rustl_nil.clone());
+    eval_expression(&mut ast_, &mut root_scope, &mut rustl_eval_ctx);
   }
 
-  println!("scope:{root_scope:#?}")
+  // println!("scope:{root_scope:#?}")
 }
 
 fn create_numeric_value_from_ast(ast:&Box<Expr>) -> Option<RustlValue> 
@@ -286,7 +355,7 @@ fn create_numeric_value_from_ast(ast:&Box<Expr>) -> Option<RustlValue>
   }
 }
 
-fn eval_expression(ast:& Box<Expr>, cur_scope: &mut EvalScope, nil: Rc<RustlValue>) -> Option< Rc<RustlValue> >{
+fn eval_expression(ast:& Box<Expr>, cur_scope: &mut EvalScope, ctx: &mut RustlCtx) -> Option< Rc<RustlValue> >{
   match &ast.kind {
     AstKind::ProgramAst(_) => todo!(),
     AstKind::NumericLiteral(_) => {
@@ -296,15 +365,16 @@ fn eval_expression(ast:& Box<Expr>, cur_scope: &mut EvalScope, nil: Rc<RustlValu
     AstKind::CharLiteral(char_string) => 
       Some(Rc::new(RustlValue::create_string(char_string))),
     AstKind::Let(name, value_ast) => {
-      let value = eval_expression(&value_ast, cur_scope, nil.clone())?;
+      let value = eval_expression(&value_ast, cur_scope, ctx)?;
       cur_scope.stack_value.insert(name.to_string(), value);
-      Some(nil) 
+      Some(ctx.get_nil()) 
     },
     AstKind::AstName(name_string) => 
-      Some(Rc::new(RustlValue::create_string(&name_string))) ,
+      // Some(Rc::new(RustlValue::create_string(&name_string))) ,
+      cur_scope.get_local_variable(name_string).and_then(|rc| Some(rc.clone())),
     AstKind::BinaryOp(op_string, lhs, rhs) => {
-      let lhs_value = eval_expression(lhs, cur_scope, nil.clone())?;
-      let rhs_value = eval_expression(rhs, cur_scope, nil.clone())?;
+      let lhs_value = eval_expression(lhs, cur_scope, ctx)?;
+      let rhs_value = eval_expression(rhs, cur_scope, ctx)?;
       if op_string.eq("+") {
         return rustl_add(&lhs_value, &rhs_value);
       } else if op_string.eq("*") {
@@ -317,8 +387,23 @@ fn eval_expression(ast:& Box<Expr>, cur_scope: &mut EvalScope, nil: Rc<RustlValu
       None
     },
     AstKind::FnDeclAst(_, _, _) => None,
-    AstKind::RustlAnnotation(_) =>  None,
+    AstKind::RustlAnnotation(_) => None,
     AstKind::AstNull => None,
     AstKind::FnDeclArgs(_) => None,
+    AstKind::StringLiteral(literal) => 
+      Some(Rc::new(RustlValue::create_string(literal))),
+    AstKind::FnCall(name ,args) => {
+      
+      let args_value: Vec<Rc<RustlValue>> = 
+        args
+        .iter()
+        .map(|expr| { 
+          eval_expression(expr, cur_scope, ctx)
+            .or(Some(ctx.get_nil().clone()))
+            .unwrap() 
+        }).into_iter().collect();
+      let builtin_fn = ctx.builtin_func.get_fn(name)?;
+      Some(builtin_fn.call(&args_value))
+    },
   }
 }

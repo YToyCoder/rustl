@@ -20,6 +20,7 @@ pub enum TokenTyp
   TokenFnDecl,
   TokenComma, // ,
   TokenColon, // :
+  TokenStringLiteral, // ".*"
 }
 
 #[derive(PartialEq,Debug)]
@@ -65,7 +66,13 @@ impl Token
 
     // parse number literal
     if first_char.is_ascii_digit() {
-      return Self::parse_numeric(buffer);
+      return Self::parse_numeric(buffer); 
+    }
+
+    if first_char == b'\"' {
+      let (token, end) = Self::parse_string_literal(buffer)?;
+      let string_literal_value = token.token_value.splitn(3, "\"").skip(1).next().unwrap().to_string();
+      return Ok((Token{token_value: string_literal_value, ..token }, end)) ; 
     }
 
     // parse char literal
@@ -128,6 +135,15 @@ impl Token
     match Self::split_buffer_to_token(buffer, read_cursor + 1, TokenTyp::TokenChar)  {
       Ok(token_with_size) => Some(token_with_size),
       Err(_) => None
+    }
+  }
+
+  fn parse_string_literal(buffer:& [u8]) -> Result<(Token, usize), ()>  {
+    let is_string_literal_end = |c: u8| { c == b'\"' };
+    match Self::parse_till(buffer, 1, is_string_literal_end)  {
+      None => Err(()),
+      Some(end) => 
+        Self::split_buffer_to_token(buffer, end + 1, TokenTyp::TokenStringLiteral)
     }
   }
 

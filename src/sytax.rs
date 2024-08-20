@@ -36,6 +36,7 @@ use crate::lexer::{self, Token, TokenTyp};
 pub enum AstKind {
   ProgramAst(Vec<Box<Expr>>),
   NumericLiteral(String),
+  StringLiteral(String),
   CharLiteral(String),
   Let(String, Box<Expr>),
   AstName(String),
@@ -43,6 +44,7 @@ pub enum AstKind {
   FnDeclAst(Option<Box<Expr>>, String, Box<Expr>),
   FnDeclArgs(Vec<Box<Expr>>),
   RustlAnnotation(String),
+  FnCall(String, Vec<Box<Expr>>),
   AstNull
 }
 
@@ -100,6 +102,19 @@ impl <'a> ParsingCtx<'a> {
       Err(format!(" token is not expect ({cur_token:#?}), real token typ {token_typ:#?}")) 
     }
   }
+
+  fn next_token_typ(&mut self, tt:&[TokenTyp]) -> bool {
+    for t_idx in 0..tt.len() {
+      let token_is_not_right_type = 
+        !self.tokens
+          .get(t_idx + self.token_cursor)
+          .map_or(false, |t| { t.token_t == tt[t_idx]});
+      if token_is_not_right_type {
+        return false;
+      }
+    }
+    true
+  }
 }
 
 type ParsingResult = Result<Box<Expr>, String> ;
@@ -142,14 +157,18 @@ impl Parser
       lexer::TokenTyp::TokenLet => self.parse_decl(ctx),
       lexer::TokenTyp::TokenFnDecl => self.parse_fn_decl(ctx),
       lexer::TokenTyp::TokenRustlAnnotation => self.parse_rustl_annotation(ctx),
-      _ => self.parse_binary_expression(ctx),
+      _ =>{
+        if ctx.next_token_typ(&[TokenTyp::TokenName, TokenTyp::TokenLParenthesis]) {
+          // parse to call
+          return self.parse_fn_call(ctx);
+        }
+        self.parse_binary_expression(ctx)
+      },
     }?;
 
     if token_typ != lexer::TokenTyp::TokenRustlAnnotation {
       let _ = ctx.expect_cur_token(TokenTyp::TokenStatementEnd)?;
       ctx.consume_cur_token();
-    }else {
-      println!("annotation {res:#?}");
     }
 
     Ok(res) 
@@ -233,6 +252,8 @@ impl Parser
         Ok(AstKind::NumericLiteral(token.token_value.clone())) , 
       lexer::TokenTyp::TokenChar => 
         Ok(AstKind::CharLiteral(token.token_value.clone())) , 
+      lexer::TokenTyp::TokenStringLiteral => 
+        Ok(AstKind::StringLiteral(token.token_value.clone())) , 
       _ => Err("")
     }?;
 
@@ -256,7 +277,7 @@ impl Parser
   }
 
   fn parse_rustl_annotation(& mut self , ctx: &mut ParsingCtx) -> ParsingResult {
-    println!("parse rustl annotation");
+    // println!("parse rustl annotation");
     let annotation = ctx.expect_cur_token(TokenTyp::TokenRustlAnnotation)?;
     let annotation_ast =Box::new(Expr{kind:AstKind::CharLiteral(annotation.token_value.clone())});
     ctx.consume_cur_token();
@@ -275,7 +296,7 @@ impl Parser
     Ok(new_ast)
   }
 
-  fn parse_fn_decl_arg(& mut self , ctx: &mut ParsingCtx)  -> ParsingResult {
+  fn parse_fn_decl_arg(&mut self , ctx: &mut ParsingCtx)  -> ParsingResult {
     let _left_parent = ctx.expect_cur_token(TokenTyp::TokenLParenthesis)?;
     ctx.consume_cur_token();
 
@@ -309,4 +330,37 @@ impl Parser
     Ok( Box::new(Expr{kind: AstKind::FnDeclArgs(arg_decl_list)}) )
   }
 
+  fn parse_fn_call(&mut self , ctx: &mut ParsingCtx) -> ParsingResult {
+    let call_identifier = ctx.get_cur_token().unwrap().token_value.clone();
+    ctx.consume_cur_token();
+    ctx.expect_cur_token(TokenTyp::TokenLParenthesis)?;
+    ctx.consume_cur_token();
+    let mut call_args:Vec<Box<Expr>> = vec![];
+
+    loop {
+      if !ctx.has_token() {
+        break;
+      }
+
+      if ctx.next_token_typ(&[TokenTyp::TokenRParenthesis]) {
+        break;
+      }
+
+      let in_arg = self.parse_binary_expression(ctx)?;
+      call_args.push(in_arg);
+
+      if !ctx.next_token_typ(&[TokenTyp::TokenComma]) {
+        break;
+      }
+
+      ctx.consume_cur_token();
+    }
+
+    if !ctx.next_token_typ(&[TokenTyp::TokenRParenthesis]) {
+      return Err("".to_string())
+    }
+    ctx.consume_cur_token();
+
+    Ok(Box::new(Expr{kind: AstKind::FnCall(call_identifier, call_args)}))
+  }
 }
