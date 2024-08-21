@@ -4,7 +4,7 @@ use crate::lexer::{self, Token, TokenTyp};
 
 
 // --------------------------------- rustl sytax ----------------------------- 
-// delaration : let $name = $expression;
+// declaration : let $name = $expression;
 // expression : $binary_operation
 // binary_operation : 
 //    $expression_one | 
@@ -24,6 +24,11 @@ use crate::lexer::{self, Token, TokenTyp};
 //    $name |
 //    $name , $decl_arg_list
 // rustl_annotation : @$name
+// funtion_definition : fn name ( $decl_arg_list ) { $function_statement_list }
+// function_statement : $declaration ; | $expression ; 
+// function_statement_list : 
+//      $function_statement |
+//      $function_statement $function_statement_list
 // ---------------------------------------------------------------------------- 
 // --------------------------------- example ---------------------------------- 
 // let name = "string_literal";
@@ -31,6 +36,9 @@ use crate::lexer::{self, Token, TokenTyp};
 // let numeric_expression = 3.1415 * 9 * 8 / 2;
 // @builtin
 // fn print(arg);
+// fn definition(arg, arg1) {
+//    let m = "a";
+// }
 
 #[derive(Debug)]
 pub enum AstKind {
