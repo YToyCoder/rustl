@@ -7,6 +7,8 @@ pub enum TokenTyp
   TokenNumLiteral,
   TokenLParenthesis, // (
   TokenRParenthesis, // )
+  TokenLBrace, // {
+  TokenRBrace, // }
   TokenEq,
   TokenAssign,
   TokenBitOr,
@@ -24,10 +26,30 @@ pub enum TokenTyp
 }
 
 #[derive(PartialEq,Debug)]
+pub struct Location {
+  pub start:  usize,
+  pub end:    usize,
+}
+
+impl Default for Location {
+  fn default() -> Self {
+    Self { start: Default::default(), end: Default::default() }
+  }
+}
+
+#[derive(PartialEq,Debug)]
 pub struct Token 
 {
   pub token_t: TokenTyp,
   pub token_value: String,
+  pub location: Location,
+}
+
+impl Token {
+  pub fn set_location(&mut self, start: usize, end: usize) -> () {
+    self.location.start = start;
+    self.location.end = end;
+  }
 }
 
 lazy_static!  {
@@ -48,7 +70,7 @@ fn get_string_keyword_typ(string: &String) -> Option<&TokenTyp>
 impl Token 
 {
   pub fn new(tt : TokenTyp, tv: String) -> Token {
-    Self { token_t : tt,  token_value: tv  }
+    Self { token_t : tt,  token_value: tv , location: Location::default() }
   }
 
   pub fn parse_from_string(buffer:& [u8]) -> Result<(Token, usize), ()> {
@@ -71,7 +93,14 @@ impl Token
 
     if first_char == b'\"' {
       let (token, end) = Self::parse_string_literal(buffer)?;
-      let string_literal_value = token.token_value.splitn(3, "\"").skip(1).next().unwrap().to_string();
+      let string_literal_value = 
+        token.token_value
+          .splitn(3, "\"")
+          .skip(1)
+          .next()
+          .unwrap()
+          .to_string();
+
       return Ok((Token{token_value: string_literal_value, ..token }, end)) ; 
     }
 
@@ -95,6 +124,8 @@ impl Token
       b')'  => Self::one_char_token(TokenTyp::TokenRParenthesis, first_char),
       b','  => Self::one_char_token(TokenTyp::TokenComma, first_char),
       b':'  => Self::one_char_token(TokenTyp::TokenColon, first_char),
+      b'{'  => Self::one_char_token(TokenTyp::TokenLBrace, first_char),
+      b'}'  => Self::one_char_token(TokenTyp::TokenRBrace, first_char),
       b'@'  => Self::parse_rustl_annotation(buffer),
       _ => Err(())
     }

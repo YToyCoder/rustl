@@ -45,6 +45,7 @@ pub enum AstKind {
   FnDeclArgs(Vec<Box<Expr>>),
   RustlAnnotation(String),
   FnCall(String, Vec<Box<Expr>>),
+  FnDefine(String, Box<Expr>, Vec<Box<Expr>>),
   AstNull
 }
 
@@ -167,7 +168,18 @@ impl Parser
       },
     }?;
 
-    if token_typ != lexer::TokenTyp::TokenRustlAnnotation {
+    let need_statement_end =  {
+      if token_typ == lexer::TokenTyp::TokenRustlAnnotation {
+        false
+      } else {
+        match res.kind {
+          AstKind::FnDefine(_, _, _) => false,
+          _ => true,
+        }
+      }
+    };
+
+    if need_statement_end {
       let _ = ctx.expect_cur_token(TokenTyp::TokenStatementEnd)?;
       ctx.consume_cur_token();
     }
@@ -293,8 +305,68 @@ impl Parser
 
     let arg_list_ast = self.parse_fn_decl_arg(ctx)?;
 
-    let new_ast = Box::new(Expr{kind: AstKind::FnDeclAst(None, fn_name.to_string(),  arg_list_ast )});
+    // try to parse fn body
+    if !ctx.next_token_typ(&[TokenTyp::TokenLBrace]) {
+      let new_ast = Box::new(Expr{kind: AstKind::FnDeclAst(None, fn_name.to_string(),  arg_list_ast )});
+      return Ok(new_ast);
+    }
+
+    ctx.consume_cur_token();
+
+    let mut fn_statements : Vec<Box<Expr>> = vec![];
+    loop {
+      if !ctx.has_token() {
+        break;
+      }
+
+      if ctx.next_token_typ(&[TokenTyp::TokenRBrace]) {
+        break;
+      }
+
+      fn_statements.push(self.parse_statement_in_fn(ctx)?);
+
+      ctx.expect_cur_token(TokenTyp::TokenStatementEnd)?;
+
+      if ctx.next_token_typ(&[TokenTyp::TokenRBrace]) {
+        break;
+      }
+
+    }
+
+    ctx.expect_cur_token(TokenTyp::TokenRBrace)?;
+    ctx.consume_cur_token();
+
+    let new_ast = Box::new(Expr{kind: AstKind::FnDefine(fn_name.to_string(),  arg_list_ast, fn_statements)});
     Ok(new_ast)
+  }
+
+  fn parse_statement_in_fn(& mut self , ctx: &mut ParsingCtx) -> ParsingResult {
+    
+    let Some(token) = ctx.get_cur_token() else {
+      return Err("token is empty".to_string());
+    };
+
+    let token_typ = token.token_t;
+    let res =  match token_typ {
+      lexer::TokenTyp::TokenLet => self.parse_decl(ctx),
+      lexer::TokenTyp::TokenFnDecl => 
+        Err("fn declaration should not in fn definition".to_string()),
+      lexer::TokenTyp::TokenRustlAnnotation => 
+        Err("annotation should not in fn definition".to_string()),
+      _ => {
+        if ctx.next_token_typ(&[TokenTyp::TokenName, TokenTyp::TokenLParenthesis]) {
+          // parse to call
+          self.parse_fn_call(ctx)
+        }else {
+          self.parse_binary_expression(ctx)
+        }
+      },
+    }?;
+
+    let _ = ctx.expect_cur_token(TokenTyp::TokenStatementEnd)?;
+    ctx.consume_cur_token();
+
+    Ok(res) 
   }
 
   fn parse_fn_decl_arg(&mut self , ctx: &mut ParsingCtx)  -> ParsingResult {
@@ -365,4 +437,5 @@ impl Parser
 
     Ok(Box::new(Expr{kind: AstKind::FnCall(call_identifier, call_args)}))
   }
+
 }

@@ -405,5 +405,6 @@ fn eval_expression(ast:& Box<Expr>, cur_scope: &mut EvalScope, ctx: &mut RustlCt
       let builtin_fn = ctx.builtin_func.get_fn(name)?;
       Some(builtin_fn.call(&args_value))
     },
+    AstKind::FnDefine(_, _, _) => todo!(),
   }
 }

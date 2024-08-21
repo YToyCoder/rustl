@@ -20,6 +20,8 @@ fn main() {
     let d = string_variable + \"44\";
     print(d);
     print(c);
+    fn define_fn() {
+    }
     ".to_string();
   parse_to_token(&mut read_token, unsafe { parse_code.as_bytes_mut() });
 
@@ -27,7 +29,7 @@ fn main() {
   let mut ctx = sytax::ParsingCtx::new(&read_token);
   // println!("{ctx:#?}");
   parser.parse(&mut ctx);
-  // println!("ast: \n{:#?}", parser.root);
+  println!("ast: \n{:#?}", parser.root);
   let Some(mut ast) = parser.root else {
     return ();
   };
@@ -55,12 +57,14 @@ fn main() {
 // }
 
 fn parse_to_token(read_token: &mut Vec<lexer::Token>, mut buffer: &mut [u8]) -> () {
+  let mut token_parsing_offset = 0;
   loop 
   {
-    let Ok((token , size)) = lexer::Token::parse_from_string(&buffer) else  {
+    let Ok((mut token , size)) = lexer::Token::parse_from_string(&buffer) else  {
       if !buffer.is_empty() {
         // println!("not support is char parsing {}", buffer[0]);
         buffer = buffer.split_at_mut(1).1;
+        token_parsing_offset += 1;
         // not support token yet!
         continue;
       }
@@ -68,6 +72,9 @@ fn parse_to_token(read_token: &mut Vec<lexer::Token>, mut buffer: &mut [u8]) -> 
         break;
       }
     };
+
+    token.set_location(token_parsing_offset, token_parsing_offset + size);
+    token_parsing_offset += size;
 
     read_token.push(token);
     let ignore_space = || -> usize
