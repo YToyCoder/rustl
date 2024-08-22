@@ -244,15 +244,95 @@ impl RustlValue
 
 }
 
-#[derive(Debug)]
-struct EvalScope 
-{
-  stack_value: HashMap<String, Rc<RustlValue>>,
+#[derive(Debug,Clone)]
+struct FnDefinition {
+  arg_list: Vec<String>,
+  statements: Vec<Box<Expr>>,
 }
 
-impl EvalScope {
-  pub fn get_local_variable(&self, name: &String ) -> Option<&Rc<RustlValue>> {
-    self.stack_value.get(name)
+trait Scope {
+  fn get_local_variable(&self, name: &String) -> Option<&Rc<RustlValue>>;
+  fn set_local_variable(&mut self, name: &String, value: Rc<RustlValue>);
+  fn get_fn_definition(&self, name:&String) -> Option<&FnDefinition>;
+  fn add_fn_definition(&mut self, _name:&String, _arg_list:& Vec<String>, _statements: &Vec<Box<Expr>>) {}
+  fn do_fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result;
+}
+
+impl Debug for dyn Scope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+      self.do_fmt(f)
+    }
+}
+
+
+struct FunctionScope<'a>
+{
+  stack_value: HashMap<String, Rc<RustlValue>>,
+  parent_scope: &'a dyn Scope,
+  return_value: Rc<RustlValue>,
+}
+
+// impl<'a, 'b:'a> FunctionScope<'a, 'b> {
+//   pub fn new(mut parent:&mut Box<dyn Scope + 'a>) -> Self {
+//     FunctionScope{ stack_value: HashMap::default(), parent_scope: &mut parent}
+//   }
+// }
+
+impl<'a> Scope for FunctionScope<'a> {
+
+  fn do_fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+      f.debug_struct("FunctionScope").field("stack_value", &self.stack_value).finish()
+  }
+
+  fn get_local_variable(&self, name: &String ) -> Option<&Rc<RustlValue>> {
+    let res = self.stack_value.get(name);
+    if res.is_some() {
+      return res;
+    }
+
+    self.parent_scope.get_local_variable(name)
+  }
+
+  fn set_local_variable(&mut self, name: &String, value: Rc<RustlValue>) {
+    self.stack_value.insert(name.clone(), value);
+  }
+  
+  fn get_fn_definition(&self, _:&String) -> Option<&FnDefinition> {
+    None
+  }
+}
+
+#[derive(Debug)]
+struct GlobalScope {
+  global_variable: HashMap<String, Rc<RustlValue>>,
+  user_defined_fn: HashMap<String, FnDefinition>
+}
+
+impl Default for GlobalScope {
+  fn default() -> Self {
+    Self { global_variable: Default::default(), user_defined_fn: Default::default() }
+  }
+}
+
+impl Scope for GlobalScope {
+  fn get_local_variable(&self, name: &String ) -> Option<&Rc<RustlValue>> {
+    self.global_variable.get(name)
+  }
+
+  fn set_local_variable(&mut self, name: &String, value: Rc<RustlValue>) {
+    self.global_variable.insert(name.clone(), value);
+  }
+  
+  fn get_fn_definition(&self, name:&String) -> Option<&FnDefinition> {
+    self.user_defined_fn.get(name)
+  }
+  
+  fn add_fn_definition(&mut self, name:&String, arg_list:& Vec<String>, statements: &Vec<Box<Expr>>) {
+    self.user_defined_fn.insert(name.to_string(), FnDefinition { arg_list: arg_list.to_vec(), statements: statements.to_vec()});
+  }
+  
+  fn do_fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("GlobalScope").field("global_variable", &self.global_variable).field("user_defined_fn", &self.user_defined_fn).finish()
   }
 }
 
@@ -317,7 +397,7 @@ impl RustlBuiltinFn for RustlFnPrint {
 }
 
 pub fn eval_ast(ast:&mut Expr) -> () {
-  let mut root_scope = EvalScope{stack_value: HashMap::new()};
+  let mut root_scope = GlobalScope::default();
 
   let mut rustl_eval_ctx = RustlCtx::default();
   let AstKind::ProgramAst(ref statements) = ast.kind else {
@@ -355,7 +435,7 @@ fn create_numeric_value_from_ast(ast:&Box<Expr>) -> Option<RustlValue>
   }
 }
 
-fn eval_expression(ast:& Box<Expr>, cur_scope: &mut EvalScope, ctx: &mut RustlCtx) -> Option< Rc<RustlValue> >{
+fn eval_expression<'a: 'b, 'b >(ast:& Box<Expr>, cur_scope: &'a mut dyn Scope, ctx: &mut RustlCtx) -> Option< Rc<RustlValue> >{
   match &ast.kind {
     AstKind::ProgramAst(_) => todo!(),
     AstKind::NumericLiteral(_) => {
@@ -366,7 +446,7 @@ fn eval_expression(ast:& Box<Expr>, cur_scope: &mut EvalScope, ctx: &mut RustlCt
       Some(Rc::new(RustlValue::create_string(char_string))),
     AstKind::Let(name, value_ast) => {
       let value = eval_expression(&value_ast, cur_scope, ctx)?;
-      cur_scope.stack_value.insert(name.to_string(), value);
+      cur_scope.set_local_variable(name, value);
       Some(ctx.get_nil()) 
     },
     AstKind::AstName(name_string) => 
@@ -402,9 +482,41 @@ fn eval_expression(ast:& Box<Expr>, cur_scope: &mut EvalScope, ctx: &mut RustlCt
             .or(Some(ctx.get_nil().clone()))
             .unwrap() 
         }).into_iter().collect();
+      
+      let user_defined_fn_opt = cur_scope.get_fn_definition(name);
+      if user_defined_fn_opt.is_some() {
+        let user_defined_fn: FnDefinition = user_defined_fn_opt.unwrap().clone();
+        let mut new_scope = FunctionScope{stack_value:Default::default(), parent_scope: cur_scope, return_value: ctx.get_nil().clone()};
+        for arg in 0..user_defined_fn.arg_list.len() {
+          new_scope.set_local_variable(
+            &user_defined_fn.arg_list[arg], 
+            args_value
+              .get(arg)
+              .or(Some(&ctx.get_nil().clone()))
+              .unwrap()
+              .clone())
+        }
+        for ast in user_defined_fn.statements {
+          eval_expression(&ast, &mut new_scope, ctx);
+        }
+        return Some(new_scope.return_value)
+      }
+
       let builtin_fn = ctx.builtin_func.get_fn(name)?;
       Some(builtin_fn.call(&args_value))
     },
-    AstKind::FnDefine(_, _, _) => todo!(),
+    AstKind::FnDefine(name, args, statements) => {
+      let arg_list: Option<Vec<String>> = match &args.kind {
+        AstKind::FnDeclArgs(arg_expr) => {
+          Some(arg_expr.iter().map_while(|expr| { match &expr.kind {
+            AstKind::AstName(name) => Some(name.clone()) ,
+            _ => None
+          } }).collect())
+        },
+        _ => None
+      };
+      cur_scope.add_fn_definition(name, &arg_list?, statements);
+      None
+    },
   }
 }

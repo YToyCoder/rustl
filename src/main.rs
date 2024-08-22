@@ -20,8 +20,11 @@ fn main() {
     let d = string_variable + \"44\";
     print(d);
     print(c);
-    fn define_fn() {
+    fn define_fn(not_used_arg) {
+      let variable_in_fn = 3.1415926 * 1000;
+      print(\"Hello, function definition!\");
     }
+    define_fn(123);
     ".to_string();
   parse_to_token(&mut read_token, unsafe { parse_code.as_bytes_mut() });
 
@@ -29,7 +32,7 @@ fn main() {
   let mut ctx = sytax::ParsingCtx::new(&read_token);
   // println!("{ctx:#?}");
   parser.parse(&mut ctx);
-  println!("ast: \n{:#?}", parser.root);
+  // println!("ast: \n{:#?}", parser.root);
   let Some(mut ast) = parser.root else {
     return ();
   };

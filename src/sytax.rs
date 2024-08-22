@@ -40,7 +40,7 @@ use crate::lexer::{self, Token, TokenTyp};
 //    let m = "a";
 // }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum AstKind {
   ProgramAst(Vec<Box<Expr>>),
   NumericLiteral(String),
@@ -57,7 +57,7 @@ pub enum AstKind {
   AstNull
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Expr {
   pub kind: AstKind,
 }
@@ -333,7 +333,8 @@ impl Parser
 
       fn_statements.push(self.parse_statement_in_fn(ctx)?);
 
-      ctx.expect_cur_token(TokenTyp::TokenStatementEnd)?;
+      // ctx.expect_cur_token(TokenTyp::TokenStatementEnd)?;
+      // ctx.consume_cur_token();
 
       if ctx.next_token_typ(&[TokenTyp::TokenRBrace]) {
         break;
@@ -371,7 +372,7 @@ impl Parser
       },
     }?;
 
-    let _ = ctx.expect_cur_token(TokenTyp::TokenStatementEnd)?;
+    ctx.expect_cur_token(TokenTyp::TokenStatementEnd)?;
     ctx.consume_cur_token();
 
     Ok(res) 
