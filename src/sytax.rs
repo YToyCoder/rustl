@@ -49,11 +49,14 @@ pub enum AstKind {
   Let(String, Box<Expr>),
   AstName(String),
   BinaryOp(String, Box<Expr>, Box<Expr>),
+  Unary(String, Box<Expr>),
   FnDeclAst(Option<Box<Expr>>, String, Box<Expr>),
   FnDeclArgs(Vec<Box<Expr>>),
   RustlAnnotation(String),
   FnCall(String, Vec<Box<Expr>>),
   FnDefine(String, Box<Expr>, Vec<Box<Expr>>),
+  LiteralTrue,
+  LiteralFalse,
   AstNull
 }
 
@@ -171,7 +174,7 @@ impl Parser
           // parse to call
           self.parse_fn_call(ctx)
         }else {
-          self.parse_binary_expression(ctx)
+          self.parse_bool_binary(ctx)
         }
       },
     }?;
@@ -201,7 +204,7 @@ impl Parser
     let is_fit_token = 
       |tk: &Token| {
         match tk.token_t {
-          lexer::TokenTyp::TokenSub => true,
+          lexer::TokenTyp::TokenSub |
           lexer::TokenTyp::TokenAdd => true,
           _ => false
         }
@@ -228,6 +231,48 @@ impl Parser
     Ok(lhs)
   }
 
+  fn parse_bool_binary(&mut self, ctx: &mut ParsingCtx) -> ParsingResult {
+    let mut lhs = self.parse_binary_expression(ctx)?;
+
+    let is_fit_token = 
+      |tk: &Token| {
+        match tk.token_t {
+          lexer::TokenTyp::TokenBoolOR |
+          lexer::TokenTyp::TokenBoolAND => true,
+          _ => false
+        }
+      };
+
+
+    loop {
+      if !ctx.has_token() {
+        break;
+      }
+
+      let cur_token = ctx.get_cur_token().unwrap();
+      if !is_fit_token(cur_token) {
+        break;
+      }
+
+      let token_typ = cur_token.token_t;
+      ctx.consume_cur_token();
+
+      match token_typ {
+        lexer::TokenTyp::TokenBoolAND => {
+          let rhs = self.parse_expression_one_token(ctx)?;
+          lhs = Box::new(Expr{ kind: AstKind::BinaryOp("&&".to_string(), lhs, rhs)});
+        },
+        lexer::TokenTyp::TokenBoolOR  => {
+          let rhs = self.parse_bool_binary(ctx)?;
+          lhs = Box::new(Expr{ kind: AstKind::BinaryOp("||".to_string(), lhs, rhs)});
+        },
+        _ => return Err(format!("bool binary not support this operator {:?}", token_typ))
+      }
+    }
+
+    Ok(lhs)
+  }
+
   fn parse_expression_one(&mut self, ctx: &mut ParsingCtx) -> ParsingResult {
     // todo: ( $expression )
 
@@ -236,7 +281,7 @@ impl Parser
     let is_fit_token = 
       |tk: &Token| {
         match tk.token_t {
-          lexer::TokenTyp::TokenDiv => true,
+          lexer::TokenTyp::TokenDiv |
           lexer::TokenTyp::TokenMul => true,
           _ => false
         }
@@ -275,6 +320,10 @@ impl Parser
         Ok(AstKind::CharLiteral(token.token_value.clone())) , 
       lexer::TokenTyp::TokenStringLiteral => 
         Ok(AstKind::StringLiteral(token.token_value.clone())) , 
+      lexer::TokenTyp::TokenTrue => 
+        Ok(AstKind::LiteralTrue),
+      lexer::TokenTyp::TokenFalse => 
+        Ok(AstKind::LiteralFalse),
       _ => Err(format!( "parsing expression one token not match any token{token:#?}"))
     }?;
 
@@ -293,7 +342,7 @@ impl Parser
     let _assign_operation = ctx.expect_cur_token(TokenTyp::TokenAssign)?;
 
     ctx.consume_cur_token();
-    let assigned_expression = self.parse_binary_expression(ctx)?;
+    let assigned_expression = self.parse_bool_binary(ctx)?;
     Ok(Box::new(Expr{kind:AstKind::Let(variable_name, assigned_expression)}))
   }
 

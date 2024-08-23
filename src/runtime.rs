@@ -77,6 +77,14 @@ macro_rules! numeric_op_define {
   };
 }
 
+macro_rules! bool_op_define {
+  ($op:tt $name:tt) => {
+    pub fn $name(&self, other:& Rc<RustlValue>) -> Option< Rc<RustlValue> > {
+      Some(Rc::new(RustlValue::create_bool(self.to_bool()? $op other.to_bool()?)))
+    }
+  };
+}
+
 pub struct RustlValue 
 {
   tag: RustlValueTyp,
@@ -95,9 +103,8 @@ impl RustlValue {
   }
 
   pub fn is_char(&self) -> bool { self.tag == RustlValueTyp::RustlChar }
-
   pub fn is_string(&self) -> bool { self.tag == RustlValueTyp::RustlString }
-
+  pub fn is_bool(&self) -> bool { self.tag == RustlValueTyp::RustlBool }
   pub fn is_numeric(&self) -> bool {
     match self.tag {
       RustlValueTyp::RustlInt | 
@@ -151,6 +158,32 @@ impl RustlValue {
       }
     }
   }
+
+  pub fn to_bool(&self) -> Option<bool> {
+    unsafe {
+      match self.tag {
+        RustlValueTyp::RustlBool 
+          => Some(self.value.value_bool),
+        RustlValueTyp::RustlInt
+          => Some(self.value.value_int != 0),
+        RustlValueTyp::RustlFloat
+          => Some(self.value.value_float != 0.0),
+        RustlValueTyp::RustlChar 
+          => Some(self.value.value_char != 0 as char),
+        RustlValueTyp::RustlString 
+          => Some(!self.value.value_string.is_empty()),
+        RustlValueTyp::RustlObj
+          => Some(true),
+      }
+    }
+  }
+
+  pub fn bool_not(&self) -> Option< Rc<RustlValue> > {
+    Some(Rc::new(RustlValue::create_bool(!self.to_bool()?)))
+  }
+
+  bool_op_define! {||  bool_or} 
+  bool_op_define! {&&  bool_and}
 
   numeric_op_define! { +  numeric_add }
   numeric_op_define! { -  numeric_sub }
@@ -256,6 +289,12 @@ trait Scope {
   fn get_fn_definition(&self, name:&String) -> Option<&FnDefinition>;
   fn add_fn_definition(&mut self, _name:&String, _arg_list:& Vec<String>, _statements: &Vec<Box<Expr>>) {}
   fn do_fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result;
+
+  fn set_error(&mut self, error: Rc<RustlValue>);
+
+  fn has_error(&self) -> bool {
+    false
+  }
 }
 
 impl Debug for dyn Scope {
@@ -270,6 +309,7 @@ struct FunctionScope<'a>
   stack_value: HashMap<String, Rc<RustlValue>>,
   parent_scope: &'a dyn Scope,
   return_value: Rc<RustlValue>,
+  err: Option<Rc<RustlValue>>
 }
 
 // impl<'a, 'b:'a> FunctionScope<'a, 'b> {
@@ -300,17 +340,27 @@ impl<'a> Scope for FunctionScope<'a> {
   fn get_fn_definition(&self, _:&String) -> Option<&FnDefinition> {
     None
   }
+  
+  fn set_error(&mut self, error: Rc<RustlValue>) {
+    self.err = Some(error)
+  }
+
+  
+  fn has_error(&self) -> bool {
+    self.err.is_some()
+  }
 }
 
 #[derive(Debug)]
 struct GlobalScope {
   global_variable: HashMap<String, Rc<RustlValue>>,
-  user_defined_fn: HashMap<String, FnDefinition>
+  user_defined_fn: HashMap<String, FnDefinition>,
+  err: Option<Rc<RustlValue>>
 }
 
 impl Default for GlobalScope {
   fn default() -> Self {
-    Self { global_variable: Default::default(), user_defined_fn: Default::default() }
+    Self { global_variable: Default::default(), user_defined_fn: Default::default(), err: None }
   }
 }
 
@@ -333,6 +383,15 @@ impl Scope for GlobalScope {
   
   fn do_fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     f.debug_struct("GlobalScope").field("global_variable", &self.global_variable).field("user_defined_fn", &self.user_defined_fn).finish()
+  }
+ 
+  fn set_error(&mut self, error: Rc<RustlValue>) {
+    self.err = Some(error)
+  }
+
+  
+  fn has_error(&self) -> bool {
+    self.err.is_some()
   }
 }
 
@@ -406,9 +465,13 @@ pub fn eval_ast(ast:&mut Expr) -> () {
 
   let rustl_print = RustlFnPrint{ rustl_nil: rustl_eval_ctx.get_nil() };
   rustl_eval_ctx.builtin_func.register(&"print".to_string(), Box::new(rustl_print));
-  
+
   for mut ast_ in statements {
     eval_expression(&mut ast_, &mut root_scope, &mut rustl_eval_ctx);
+    if root_scope.has_error() {
+      println!("[rustl][error] {}",root_scope.err.clone().unwrap().to_string());
+      break;
+    }
   }
 
   // println!("scope:{root_scope:#?}")
@@ -449,22 +512,28 @@ fn eval_expression<'a: 'b, 'b >(ast:& Box<Expr>, cur_scope: &'a mut dyn Scope, c
       cur_scope.set_local_variable(name, value);
       Some(ctx.get_nil()) 
     },
-    AstKind::AstName(name_string) => 
+    AstKind::AstName(name_string) => {
+      let name_string_no_borrow = name_string.clone();
+      let local_variable = cur_scope.get_local_variable(name_string).and_then(|v| Some(v.clone()));
+      if local_variable.is_none() {
+        cur_scope.set_error(Rc::new(RustlValue::create_string(&format!("not found variable {}", name_string_no_borrow))));
+      }
+      local_variable
+    },
       // Some(Rc::new(RustlValue::create_string(&name_string))) ,
-      cur_scope.get_local_variable(name_string).and_then(|rc| Some(rc.clone())),
+      // cur_scope.get_local_variable(name_string).and_then(|rc| Some(rc.clone())),
     AstKind::BinaryOp(op_string, lhs, rhs) => {
       let lhs_value = eval_expression(lhs, cur_scope, ctx)?;
       let rhs_value = eval_expression(rhs, cur_scope, ctx)?;
-      if op_string.eq("+") {
-        return rustl_add(&lhs_value, &rhs_value);
-      } else if op_string.eq("*") {
-        return lhs_value.numeric_multi(&rhs_value);
-      } else if op_string.eq("/") {
-        return lhs_value.numeric_div(&rhs_value);
-      }else if op_string.eq("-") {
-        return lhs_value.numeric_sub(&rhs_value);
+      match op_string as &str {
+        "+"   => rustl_add(&lhs_value, &rhs_value),
+        "*"   => lhs_value.numeric_multi(&rhs_value),
+        "/"   => lhs_value.numeric_div(&rhs_value),
+        "-"   => lhs_value.numeric_sub(&rhs_value),
+        "&&"  => lhs_value.bool_and(&rhs_value),
+        "||"  => lhs_value.bool_or(&rhs_value),
+        _     => None,
       }
-      None
     },
     AstKind::FnDeclAst(_, _, _) => None,
     AstKind::RustlAnnotation(_) => None,
@@ -478,15 +547,16 @@ fn eval_expression<'a: 'b, 'b >(ast:& Box<Expr>, cur_scope: &'a mut dyn Scope, c
         args
         .iter()
         .map(|expr| { 
-          eval_expression(expr, cur_scope, ctx)
+            eval_expression(expr, cur_scope, ctx)
             .or(Some(ctx.get_nil().clone()))
-            .unwrap() 
-        }).into_iter().collect();
+            .unwrap() })
+        .into_iter()
+        .collect();
       
       let user_defined_fn_opt = cur_scope.get_fn_definition(name);
       if user_defined_fn_opt.is_some() {
         let user_defined_fn: FnDefinition = user_defined_fn_opt.unwrap().clone();
-        let mut new_scope = FunctionScope{stack_value:Default::default(), parent_scope: cur_scope, return_value: ctx.get_nil().clone()};
+        let mut new_scope = FunctionScope{stack_value:Default::default(), parent_scope: cur_scope, return_value: ctx.get_nil().clone(), err: None};
         for arg in 0..user_defined_fn.arg_list.len() {
           new_scope.set_local_variable(
             &user_defined_fn.arg_list[arg], 
@@ -497,7 +567,10 @@ fn eval_expression<'a: 'b, 'b >(ast:& Box<Expr>, cur_scope: &'a mut dyn Scope, c
               .clone())
         }
         for ast in user_defined_fn.statements {
-          eval_expression(&ast, &mut new_scope, ctx);
+          if eval_expression(&ast, &mut new_scope, ctx).is_none() && new_scope.has_error() {
+            cur_scope.set_error(new_scope.err.unwrap());
+            return None;
+          }
         }
         return Some(new_scope.return_value)
       }
@@ -518,5 +591,10 @@ fn eval_expression<'a: 'b, 'b >(ast:& Box<Expr>, cur_scope: &'a mut dyn Scope, c
       cur_scope.add_fn_definition(name, &arg_list?, statements);
       None
     },
+    AstKind::LiteralTrue => 
+      Some(Rc::new(RustlValue::create_bool(true))),
+    AstKind::LiteralFalse => 
+      Some(Rc::new(RustlValue::create_bool(false))),
+    AstKind::Unary(_, _) => todo!(),
   }
 }

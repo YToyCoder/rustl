@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, iter::zip};
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TokenTyp 
 {
@@ -17,6 +17,11 @@ pub enum TokenTyp
   TokenSub,
   TokenMul,
   TokenDiv,
+  TokenTrue,
+  TokenFalse,
+  TokenBoolOR,  // ||
+  TokenBoolNOT, // !
+  TokenBoolAND, // &&
   TokenStatementEnd,
   TokenRustlAnnotation, // @$name
   TokenFnDecl,
@@ -58,6 +63,8 @@ lazy_static!  {
     [
     (String::from("let") , TokenTyp::TokenLet),
     (String::from("fn") , TokenTyp::TokenFnDecl),
+    (String::from("true") , TokenTyp::TokenTrue),
+    (String::from("false") , TokenTyp::TokenFalse),
     ]
   );
 }
@@ -111,6 +118,14 @@ impl Token
       }
     }
 
+    if Self::next_is(buffer, &[b'|',b'|']) {
+      return Self::only_type_token(TokenTyp::TokenBoolOR);
+    }
+
+    if Self::next_is(buffer, &[b'&',b'&']) {
+      return Self::only_type_token(TokenTyp::TokenBoolAND);
+    }
+
     // ctrl char | operator
     match first_char {
       b'='  => Self::one_char_token(TokenTyp::TokenAssign, first_char), 
@@ -127,12 +142,25 @@ impl Token
       b'{'  => Self::one_char_token(TokenTyp::TokenLBrace, first_char),
       b'}'  => Self::one_char_token(TokenTyp::TokenRBrace, first_char),
       b'@'  => Self::parse_rustl_annotation(buffer),
-      _ => Err(())
+      b'!'  => Self::only_type_token(TokenTyp::TokenBoolNOT),
+      _     => Err(())
     }
+  }
+
+  fn only_type_token(tt : TokenTyp) -> Result<(Token, usize), ()> {
+    Ok((Token::new(tt, "".to_string()),2))
   }
 
   fn one_char_token(tt: TokenTyp, c: u8) -> Result<(Token, usize), ()> {
     Ok((Token::new(tt, unsafe { String::from_utf8_unchecked(vec![c]) }), 1))
+  }
+
+  fn next_is(buffer:& [u8],cc: &[u8]) -> bool {
+    if cc.len() > buffer.len() {
+      return false;
+    }
+
+    zip(buffer, cc).all(|(a, b)| { a == b })
   }
 
   fn char_is_token_name(c: u8) -> bool {
