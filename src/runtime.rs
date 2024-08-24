@@ -2,9 +2,10 @@ use std::{collections::HashMap, fmt::Debug, rc::Rc};
 
 use crate::sytax::{AstKind, Expr};
 
+#[derive(Debug, Clone)]
 struct RustlObj 
 {
-  fields: HashMap<String, Rc<RustlValue>>
+  fields: HashMap<String, RustlV>
 }
 
 impl RustlObj {
@@ -24,162 +25,164 @@ impl RustlObj {
   }
 }
 
-union RustlUValue {
-  value_int: i32,
-  value_float: f32,
-  value_char: char,
-  value_bool: bool,
-  value_string: std::mem::ManuallyDrop<String>,
-  obj : std::mem::ManuallyDrop<RustlObj>
-}
-
-impl RustlUValue {
-}
-
-#[derive(PartialEq, Debug, Clone, Copy)]
-pub enum RustlValueTyp {
-  RustlInt,
-  RustlFloat,
-  RustlChar,
-  RustlBool,
-  RustlObj,
-  RustlString
-}
-
 macro_rules! numeric_op_define {
   ($op:tt $name:tt) => {
-    pub fn $name(&self, other:& Rc<RustlValue>) -> Option< Rc<RustlValue> >
+    pub fn $name(&self, other:& Self) -> Option< Self >
     {
       if !self.is_numeric() || !other.is_numeric() {
         return None
       };
-  
-      let add_tag = 
-        match (self.tag, other.tag) {
-          (RustlValueTyp::RustlFloat, _) | 
-          (_, RustlValueTyp::RustlFloat) 
-            => RustlValueTyp::RustlFloat,
-          _ => RustlValueTyp::RustlInt,
+
+      let new_v = 
+        if self.is_float() || other.is_float() {
+          Self::new_float(
+            self.to_float()? + other.to_float()?)
+        }
+        else {
+          Self::new_int(
+            self.to_int_value()? +other.to_int_value()?)
         };
   
-      match add_tag {
-        RustlValueTyp::RustlFloat => 
-          Some(Rc::new(RustlValue::create_float(
-            self.to_float()? $op other.to_float()?
-          ))), 
-        RustlValueTyp::RustlInt => 
-          Some(Rc::new(RustlValue::create_int(
-            self.to_int_value()? $op other.to_int_value()?
-          ))), 
-        _ => None
-      }
+      Some(new_v)
     }
   };
 }
 
 macro_rules! bool_op_define {
   ($op:tt $name:tt) => {
-    pub fn $name(&self, other:& Rc<RustlValue>) -> Option< Rc<RustlValue> > {
-      Some(Rc::new(RustlValue::create_bool(self.to_bool()? $op other.to_bool()?)))
+    pub fn $name(&self, other:& Self) -> Option<Self> {
+      Some(Self::new_bool(self.to_bool()? $op other.to_bool()?))
     }
   };
 }
 
-pub struct RustlValue 
-{
-  tag: RustlValueTyp,
-  value: RustlUValue
+#[derive(Debug, Clone)]
+enum RustlV {
+  RustlInt(i32),
+  RustlFloat(f32),
+  RustlChar(char),
+  RustlBool(bool),
+  RustlString(String),
+  RustlObject(Rc<RustlObj>),
 }
 
-impl RustlValue {
+impl RustlV {
+  pub fn new_int(i:i32) -> RustlV { RustlV::RustlInt(i) }
+  pub fn new_float(f: f32) -> RustlV { RustlV::RustlFloat(f) }
+  pub fn new_bool(b: bool) -> RustlV { RustlV::RustlBool(b) }
+  pub fn new_string(str: &String) -> RustlV { 
+    RustlV::RustlString(str.clone())
+  }
+
+  pub fn new_obj() -> RustlV {
+    RustlV::RustlObject(Rc::new(RustlObj::empty()))
+  }
+
   pub fn is_support_add_op(&self) -> bool {
-    match self.tag {
-      RustlValueTyp::RustlInt | 
-      RustlValueTyp::RustlFloat |
-      RustlValueTyp::RustlChar |
-      RustlValueTyp::RustlString => true,
+    match self {
+      RustlV::RustlInt(_) | 
+      RustlV::RustlFloat(_) | 
+      RustlV::RustlChar(_) | 
+      RustlV::RustlString(_) => true,
       _ => false
     }
   }
 
-  pub fn is_char(&self) -> bool { self.tag == RustlValueTyp::RustlChar }
-  pub fn is_string(&self) -> bool { self.tag == RustlValueTyp::RustlString }
-  pub fn is_bool(&self) -> bool { self.tag == RustlValueTyp::RustlBool }
+  
+  pub fn is_char(&self) -> bool { 
+    match self {
+      RustlV::RustlChar(_) => true,
+      _ => false
+    }
+  }
+
+  pub fn is_string(&self) -> bool { 
+    match self {
+      RustlV::RustlString(_) => true,
+      _ => false
+    } 
+  }
+
+  pub fn is_bool(&self) -> bool { 
+    match self {
+      RustlV::RustlBool(_) => true,
+      _ => false
+    }
+  }
   pub fn is_numeric(&self) -> bool {
-    match self.tag {
-      RustlValueTyp::RustlInt | 
-      RustlValueTyp::RustlFloat => true,
+    match self {
+      RustlV::RustlInt(_) | 
+      RustlV::RustlFloat(_)  => true,
+      _ => false
+    }
+  }
+
+  pub fn is_float(&self) -> bool {
+    match self {
+      RustlV::RustlFloat(_)  => true,
+      _ => false
+    }
+  }
+
+  pub fn is_int(&self) -> bool {
+    match self {
+      RustlV::RustlInt(_)   => true,
       _ => false
     }
   }
 
   pub fn to_int_value(&self) -> Option<i32>  {
-    unsafe {
-      match self.tag {
-        RustlValueTyp::RustlInt => Some(self.value.value_int),
-        RustlValueTyp::RustlFloat => {
-          Some(self.value.value_float as i32)
-        }
-        RustlValueTyp::RustlChar => {
-          Some(self.value.value_char as i32)
-        },
-        _ => None
-      }
+    match self {
+      RustlV::RustlInt(i)  => Some(*i),
+      RustlV::RustlFloat(f)  => 
+        Some(*f as i32),
+      RustlV::RustlChar(c) => 
+        Some(*c as i32),
+      _ => None
     }
   }
 
   pub fn to_float(&self) -> Option<f32> {
-    unsafe {
-      match self.tag {
-        RustlValueTyp::RustlInt => Some(self.value.value_int as f32 ),
-        RustlValueTyp::RustlFloat => {
-          Some(self.value.value_float)
-        },
-        _ => None
-      }
+    match self {
+      RustlV::RustlInt(i) => Some(*i as f32 ),
+      RustlV::RustlFloat(f) => {
+        Some(*f)
+      },
+      _ => None
     }
   }
 
   pub fn to_string(&self) -> String {
-    unsafe {
-      match self.tag {
-        RustlValueTyp::RustlInt => 
-          self.value.value_int.to_string(),
-        RustlValueTyp::RustlFloat => 
-          self.value.value_float.to_string(),
-        RustlValueTyp::RustlChar => 
-          self.value.value_char.to_string(),
-        RustlValueTyp::RustlBool => 
-          self.value.value_bool.to_string(),
-        RustlValueTyp::RustlObj => 
-          "{Obj}".to_string(),
-        RustlValueTyp::RustlString => 
-          self.value.value_string.to_string(),
-      }
+    match self {
+      RustlV::RustlInt(i)  => 
+        i.to_string(),
+      RustlV::RustlFloat(f) => 
+        f.to_string(),
+      RustlV::RustlChar(c) => 
+        c.to_string(),
+      RustlV::RustlBool(b) => 
+        b.to_string(),
+      RustlV::RustlObject(obj) => 
+        "{Obj}".to_string(),
+      RustlV::RustlString(string) => 
+        string.to_string(),
     }
   }
 
   pub fn to_bool(&self) -> Option<bool> {
-    unsafe {
-      match self.tag {
-        RustlValueTyp::RustlBool 
-          => Some(self.value.value_bool),
-        RustlValueTyp::RustlInt
-          => Some(self.value.value_int != 0),
-        RustlValueTyp::RustlFloat
-          => Some(self.value.value_float != 0.0),
-        RustlValueTyp::RustlChar 
-          => Some(self.value.value_char != 0 as char),
-        RustlValueTyp::RustlString 
-          => Some(!self.value.value_string.is_empty()),
-        RustlValueTyp::RustlObj
-          => Some(true),
-      }
-    }
+    Some(match self {
+      RustlV::RustlInt(i)  => *i != 0,
+      RustlV::RustlFloat(f) => *f != 0.0,
+      RustlV::RustlChar(c) => *c != 0 as char,
+      RustlV::RustlBool(b) => *b,
+      RustlV::RustlObject(_) => true,
+      RustlV::RustlString(string) => 
+        string.is_empty(),
+    })
   }
 
-  pub fn bool_not(&self) -> Option< Rc<RustlValue> > {
-    Some(Rc::new(RustlValue::create_bool(!self.to_bool()?)))
+  pub fn bool_not(&self) -> Option< Self > {
+    Some(Self::new_bool(!self.to_bool()?))
   }
 
   bool_op_define! {||  bool_or} 
@@ -191,90 +194,23 @@ impl RustlValue {
   numeric_op_define! { /  numeric_div }
 }
 
-
-impl Debug for RustlValue {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-
-    let mut binding = f.debug_struct("RustlValue");
-
-    unsafe {
-      match self.tag {
-        RustlValueTyp::RustlInt => 
-          binding.field("tag", &self.tag).field("value", &self.value.value_int).finish(),
-        RustlValueTyp::RustlFloat => 
-          binding.field("tag", &self.tag).field("value", &self.value.value_float).finish(),
-        RustlValueTyp::RustlChar => 
-          binding.field("tag", &self.tag).field("value", &self.value.value_char).finish(),
-        RustlValueTyp::RustlBool => 
-          binding.field("tag", &self.tag).field("value", &self.value.value_bool).finish(),
-        RustlValueTyp::RustlObj =>  
-          binding.field("tag", &self.tag).field("value", &self.value.obj.fields).finish(),
-        RustlValueTyp::RustlString =>
-          binding.field("tag", &self.tag).field("value", &self.value.value_string).finish(),
-      }
-    }
-  }
-}
-
-fn rustl_add(l:& Rc<RustlValue>, r:& Rc<RustlValue>) -> Option<Rc<RustlValue>>
+fn rustl_add(l:& RustlV, r:& RustlV) -> Option<RustlV>
 {
   if !l.is_support_add_op() || !r.is_support_add_op(){
     return None;
   };
 
   if l.is_char() || r.is_char() {
-    return Some(Rc::new(RustlValue::create_int(l.to_int_value()? + r.to_int_value()?)));
+    return Some(RustlV::new_int(l.to_int_value()? + r.to_int_value()?));
   };
 
   if l.is_string() || r.is_string() {
-    return Some(Rc::new(RustlValue::create_string(
+    return Some(RustlV::new_string(
      &format!("{}{}", l.to_string(), r.to_string()) 
-    )));
+    ));
   };
 
   l.numeric_add(r)
-}
-
-impl RustlValue 
-{
-  pub fn create_int(i: i32) -> RustlValue { 
-    RustlValue{ tag: RustlValueTyp::RustlInt, value: RustlUValue{value_int: i} }
-  }
-
-  pub fn create_float(v: f32) -> RustlValue { 
-    RustlValue{ tag: RustlValueTyp::RustlFloat, value: RustlUValue{value_float: v} }
-  }
-
-  pub fn create_char(v: char) -> RustlValue { 
-    RustlValue{ tag: RustlValueTyp::RustlChar, value: RustlUValue{value_char: v} }
-  }
-
-  pub fn create_bool(v: bool) -> RustlValue { 
-    RustlValue{ tag: RustlValueTyp::RustlBool, value: RustlUValue{value_bool: v} }
-  }
-
-  pub fn create_obj() -> RustlValue {
-    RustlValue{ tag: RustlValueTyp::RustlObj, value: RustlUValue{obj: std::mem::ManuallyDrop::new( RustlObj::empty()) } }
-  }
-
-  pub fn create_string(string_literal: &String) -> RustlValue {
-    RustlValue{ 
-        tag: RustlValueTyp::RustlString, 
-        value: RustlUValue{value_string: std::mem::ManuallyDrop::new( string_literal.clone()) } }
-  }
-  
-  pub fn get_value_string(&self) -> Option<&String> 
-  {
-    if self.tag == RustlValueTyp::RustlString {
-      unsafe {
-        Some(&self.value.value_string)
-      } 
-    }
-    else {
-      None
-    }
-  }
-
 }
 
 #[derive(Debug,Clone)]
@@ -284,13 +220,13 @@ struct FnDefinition {
 }
 
 trait Scope {
-  fn get_local_variable(&self, name: &String) -> Option<&Rc<RustlValue>>;
-  fn set_local_variable(&mut self, name: &String, value: Rc<RustlValue>);
+  fn get_local_variable(&self, name: &String) -> Option<&RustlV>;
+  fn set_local_variable(&mut self, name: &String, value:& RustlV);
   fn get_fn_definition(&self, name:&String) -> Option<&FnDefinition>;
   fn add_fn_definition(&mut self, _name:&String, _arg_list:& Vec<String>, _statements: &Vec<Box<Expr>>) {}
   fn do_fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result;
 
-  fn set_error(&mut self, error: Rc<RustlValue>);
+  fn set_error(&mut self, error:& RustlV);
 
   fn has_error(&self) -> bool {
     false
@@ -306,17 +242,11 @@ impl Debug for dyn Scope {
 
 struct FunctionScope<'a>
 {
-  stack_value: HashMap<String, Rc<RustlValue>>,
+  stack_value: HashMap<String, RustlV>,
   parent_scope: &'a dyn Scope,
-  return_value: Rc<RustlValue>,
-  err: Option<Rc<RustlValue>>
+  return_value: RustlV,
+  err: Option<RustlV>
 }
-
-// impl<'a, 'b:'a> FunctionScope<'a, 'b> {
-//   pub fn new(mut parent:&mut Box<dyn Scope + 'a>) -> Self {
-//     FunctionScope{ stack_value: HashMap::default(), parent_scope: &mut parent}
-//   }
-// }
 
 impl<'a> Scope for FunctionScope<'a> {
 
@@ -324,7 +254,7 @@ impl<'a> Scope for FunctionScope<'a> {
       f.debug_struct("FunctionScope").field("stack_value", &self.stack_value).finish()
   }
 
-  fn get_local_variable(&self, name: &String ) -> Option<&Rc<RustlValue>> {
+  fn get_local_variable(&self, name: &String ) -> Option<&RustlV> {
     let res = self.stack_value.get(name);
     if res.is_some() {
       return res;
@@ -333,16 +263,16 @@ impl<'a> Scope for FunctionScope<'a> {
     self.parent_scope.get_local_variable(name)
   }
 
-  fn set_local_variable(&mut self, name: &String, value: Rc<RustlValue>) {
-    self.stack_value.insert(name.clone(), value);
+  fn set_local_variable(&mut self, name: &String, value: &RustlV) {
+    self.stack_value.insert(name.clone(), value.clone());
   }
   
   fn get_fn_definition(&self, _:&String) -> Option<&FnDefinition> {
     None
   }
   
-  fn set_error(&mut self, error: Rc<RustlValue>) {
-    self.err = Some(error)
+  fn set_error(&mut self, error:& RustlV) {
+    self.err = Some(error.clone())
   }
 
   
@@ -353,9 +283,9 @@ impl<'a> Scope for FunctionScope<'a> {
 
 #[derive(Debug)]
 struct GlobalScope {
-  global_variable: HashMap<String, Rc<RustlValue>>,
+  global_variable: HashMap<String, RustlV>,
   user_defined_fn: HashMap<String, FnDefinition>,
-  err: Option<Rc<RustlValue>>
+  err: Option<RustlV>
 }
 
 impl Default for GlobalScope {
@@ -365,12 +295,12 @@ impl Default for GlobalScope {
 }
 
 impl Scope for GlobalScope {
-  fn get_local_variable(&self, name: &String ) -> Option<&Rc<RustlValue>> {
+  fn get_local_variable(&self, name: &String ) -> Option<&RustlV> {
     self.global_variable.get(name)
   }
 
-  fn set_local_variable(&mut self, name: &String, value: Rc<RustlValue>) {
-    self.global_variable.insert(name.clone(), value);
+  fn set_local_variable(&mut self, name: &String, value:& RustlV) {
+    self.global_variable.insert(name.clone(), value.clone());
   }
   
   fn get_fn_definition(&self, name:&String) -> Option<&FnDefinition> {
@@ -385,8 +315,8 @@ impl Scope for GlobalScope {
     f.debug_struct("GlobalScope").field("global_variable", &self.global_variable).field("user_defined_fn", &self.user_defined_fn).finish()
   }
  
-  fn set_error(&mut self, error: Rc<RustlValue>) {
-    self.err = Some(error)
+  fn set_error(&mut self, error: & RustlV) {
+    self.err = Some(error.clone())
   }
 
   
@@ -396,29 +326,28 @@ impl Scope for GlobalScope {
 }
 
 struct RustlCtx {
-  rustl_nil: Rc<RustlValue>,
+  rustl_nil: RustlV,
   builtin_func: RustlBuiltinFnRegister,
 }
 
 impl RustlCtx {
-  fn get_nil(&self) -> Rc<RustlValue> {
+  fn get_nil(&self) -> RustlV {
     self.rustl_nil.clone()
   }
 }
 
 impl Default for RustlCtx {
   fn default() -> Self {
-    Self { rustl_nil: Rc::new(RustlValue::create_obj()), builtin_func: Default::default() }
+    Self { rustl_nil: RustlV::new_obj(), builtin_func: Default::default() }
   }
 }
 
 pub struct RustlArgList {
-  pub args: Vec<Rc<RustlValue>>,
+  pub args: Vec<Rc<RustlV>>,
 }
 
 trait RustlBuiltinFn {
-  fn call(&mut self, args:& Vec<Rc<RustlValue>>) -> Rc<RustlValue>;
-
+  fn call(&mut self, args:& Vec<RustlV>) -> RustlV;
 }
 
 struct RustlBuiltinFnRegister {
@@ -442,11 +371,11 @@ impl RustlBuiltinFnRegister {
 }
 
 struct RustlFnPrint {
-  rustl_nil: Rc<RustlValue>
+  rustl_nil: RustlV
 }
 
 impl RustlBuiltinFn for RustlFnPrint {
-  fn call(&mut self, args:& Vec<Rc<RustlValue>>) -> Rc<RustlValue> {
+  fn call(&mut self, args:& Vec<RustlV>) -> RustlV {
     if args.len() == 0 {
       println!("");
     }
@@ -463,7 +392,7 @@ pub fn eval_ast(ast:&mut Expr) -> () {
     return ();
   };
 
-  let rustl_print = RustlFnPrint{ rustl_nil: rustl_eval_ctx.get_nil() };
+  let rustl_print = RustlFnPrint{ rustl_nil: rustl_eval_ctx.get_nil().into() };
   rustl_eval_ctx.builtin_func.register(&"print".to_string(), Box::new(rustl_print));
 
   for mut ast_ in statements {
@@ -477,7 +406,7 @@ pub fn eval_ast(ast:&mut Expr) -> () {
   // println!("scope:{root_scope:#?}")
 }
 
-fn create_numeric_value_from_ast(ast:&Box<Expr>) -> Option<RustlValue> 
+fn create_numeric_value_from_ast(ast:&Box<Expr>) -> Option<RustlV> 
 {
   let AstKind::NumericLiteral(ref numeric_string) = ast.kind else {
     return None;
@@ -487,36 +416,36 @@ fn create_numeric_value_from_ast(ast:&Box<Expr>) -> Option<RustlValue>
   {
     Some(_) => 
       match numeric_string.parse::<f32>() {
-        Ok(float_value) =>  Some(RustlValue::create_float(float_value)),
+        Ok(float_value) =>  Some(RustlV::new_float(float_value)),
         Err(_) => None
       }
     None => 
       match numeric_string.parse::<i32>() {
-        Ok(int_value) =>  Some(RustlValue::create_int(int_value)),
+        Ok(int_value) =>  Some(RustlV::new_int(int_value)),
         Err(_) => None
       }
   }
 }
 
-fn eval_expression<'a: 'b, 'b >(ast:& Box<Expr>, cur_scope: &'a mut dyn Scope, ctx: &mut RustlCtx) -> Option< Rc<RustlValue> >{
+fn eval_expression<'a: 'b, 'b >(ast:& Box<Expr>, cur_scope: &'a mut dyn Scope, ctx: &mut RustlCtx) -> Option< RustlV >{
   match &ast.kind {
     AstKind::ProgramAst(_) => todo!(),
     AstKind::NumericLiteral(_) => {
       let value = create_numeric_value_from_ast(ast)?;
-      Some(Rc::new(value))
+      Some(value)
     } ,
     AstKind::CharLiteral(char_string) => 
-      Some(Rc::new(RustlValue::create_string(char_string))),
+      Some(RustlV::new_string(char_string)),
     AstKind::Let(name, value_ast) => {
       let value = eval_expression(&value_ast, cur_scope, ctx)?;
-      cur_scope.set_local_variable(name, value);
+      cur_scope.set_local_variable(name, &value);
       Some(ctx.get_nil()) 
     },
     AstKind::AstName(name_string) => {
       let name_string_no_borrow = name_string.clone();
       let local_variable = cur_scope.get_local_variable(name_string).and_then(|v| Some(v.clone()));
       if local_variable.is_none() {
-        cur_scope.set_error(Rc::new(RustlValue::create_string(&format!("not found variable {}", name_string_no_borrow))));
+        cur_scope.set_error(&RustlV::new_string(&format!("not found variable {}", name_string_no_borrow)));
       }
       local_variable
     },
@@ -540,19 +469,19 @@ fn eval_expression<'a: 'b, 'b >(ast:& Box<Expr>, cur_scope: &'a mut dyn Scope, c
     AstKind::AstNull => None,
     AstKind::FnDeclArgs(_) => None,
     AstKind::StringLiteral(literal) => 
-      Some(Rc::new(RustlValue::create_string(literal))),
+      Some(RustlV::new_string(literal)),
     AstKind::FnCall(name ,args) => {
       
-      let args_value: Vec<Rc<RustlValue>> = 
-        args
-        .iter()
-        .map(|expr| { 
-            eval_expression(expr, cur_scope, ctx)
-            .or(Some(ctx.get_nil().clone()))
-            .unwrap() })
-        .into_iter()
-        .collect();
-      
+      let mut args_value: Vec<RustlV> = vec![];
+      for arg in args {
+        let r = eval_expression(arg, cur_scope, ctx);
+        if r.is_none() && cur_scope.has_error() {
+          return None;
+        }
+
+        args_value.push(r.unwrap());
+      }
+
       let user_defined_fn_opt = cur_scope.get_fn_definition(name);
       if user_defined_fn_opt.is_some() {
         let user_defined_fn: FnDefinition = user_defined_fn_opt.unwrap().clone();
@@ -563,12 +492,11 @@ fn eval_expression<'a: 'b, 'b >(ast:& Box<Expr>, cur_scope: &'a mut dyn Scope, c
             args_value
               .get(arg)
               .or(Some(&ctx.get_nil().clone()))
-              .unwrap()
-              .clone())
+              .unwrap())
         }
         for ast in user_defined_fn.statements {
           if eval_expression(&ast, &mut new_scope, ctx).is_none() && new_scope.has_error() {
-            cur_scope.set_error(new_scope.err.unwrap());
+            cur_scope.set_error(&new_scope.err.unwrap());
             return None;
           }
         }
@@ -592,9 +520,9 @@ fn eval_expression<'a: 'b, 'b >(ast:& Box<Expr>, cur_scope: &'a mut dyn Scope, c
       None
     },
     AstKind::LiteralTrue => 
-      Some(Rc::new(RustlValue::create_bool(true))),
+      Some(RustlV::new_bool(true)),
     AstKind::LiteralFalse => 
-      Some(Rc::new(RustlValue::create_bool(false))),
+      Some(RustlV::new_bool(false)),
     AstKind::Unary(_, _) => todo!(),
   }
 }

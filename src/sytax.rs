@@ -324,6 +324,12 @@ impl Parser
         Ok(AstKind::LiteralTrue),
       lexer::TokenTyp::TokenFalse => 
         Ok(AstKind::LiteralFalse),
+      lexer::TokenTyp::TokenLParenthesis => {
+        ctx.consume_cur_token();
+        let expr = self.parse_bool_binary(ctx)?;
+        ctx.expect_cur_token(TokenTyp::TokenRParenthesis)?;
+        Ok(expr.kind)
+      },
       _ => Err(format!( "parsing expression one token not match any token{token:#?}"))
     }?;
 
@@ -477,7 +483,7 @@ impl Parser
         break;
       }
 
-      let in_arg = self.parse_binary_expression(ctx)?;
+      let in_arg = self.parse_bool_binary(ctx)?;
       call_args.push(in_arg);
 
       if !ctx.next_token_typ(&[TokenTyp::TokenComma]) {

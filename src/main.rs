@@ -24,7 +24,7 @@ fn main() {
       let variable_in_fn = 3.1415926 * 1000;
       print(\"Hello, function definition!\");
     }
-    print(true);
+    print( true || (false && false) );
     let k = true && string_var;
     define_fn(123);
     print(k);
