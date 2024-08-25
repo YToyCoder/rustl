@@ -11,30 +11,34 @@ extern crate lazy_static;
 fn main() {
   let mut read_token: Vec<lexer::Token> = vec![];
 
-  let mut parse_code = "
-    let string_variable = \"string_literal\";
-    let b = 'a';
-    let c = 4.123 + 5 / 3 * 3 - 0.1;
-    @builtin
-    fn print (arg);
-    let d = string_variable + \"44\";
-    print(d);
-    print(c);
-    fn define_fn(not_used_arg) {
-      let variable_in_fn = 3.1415926 * 1000;
-      print(\"Hello, function definition!\");
-    }
-    print( true || (false && false) );
-    let k = true && string_var;
-    define_fn(123);
-    print(k);
-    ".to_string();
+  let mut parse_code = 
+  "
+let string_variable = \"string_literal\";
+let b = 'a';
+let c = 4.123 + 5 / 3 * 3 - 0.1;
+@builtin
+fn print (arg);
+let d = string_variable + \"44\";
+print(d);
+print(c);
+fn define_fn(not_used_arg) {
+  let variable_in_fn = 3.1415926 * 1000;
+  print(\"Hello, function definition!\");
+  return variable_in_fn;
+}
+print( define_fn() );
+print( !true || (false && false) );
+call(b);
+let k = true && string_var;
+define_fn(123);
+print(k);
+".to_string();
   parse_to_token(&mut read_token, unsafe { parse_code.as_bytes_mut() });
 
   let mut parser = sytax::Parser::new();
   let mut ctx = sytax::ParsingCtx::new(&read_token);
   // println!("{ctx:#?}");
-  parser.parse(&mut ctx);
+  parser.parse(&mut ctx, &parse_code);
   // println!("ast: \n{:#?}", parser.root);
   let Some(mut ast) = parser.root else {
     return ();
@@ -80,7 +84,6 @@ fn parse_to_token(read_token: &mut Vec<lexer::Token>, mut buffer: &mut [u8]) -> 
     };
 
     token.set_location(token_parsing_offset, token_parsing_offset + size);
-    token_parsing_offset += size;
 
     read_token.push(token);
     let ignore_space = || -> usize
@@ -101,6 +104,7 @@ fn parse_to_token(read_token: &mut Vec<lexer::Token>, mut buffer: &mut [u8]) -> 
     };
 
     let next_position = ignore_space();
+    token_parsing_offset += next_position;
     buffer = buffer.split_at_mut(next_position).1
   }
 }

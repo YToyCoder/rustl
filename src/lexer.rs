@@ -24,13 +24,14 @@ pub enum TokenTyp
   TokenBoolAND, // &&
   TokenStatementEnd,
   TokenRustlAnnotation, // @$name
+  TokenReturn, // return
   TokenFnDecl,
   TokenComma, // ,
   TokenColon, // :
   TokenStringLiteral, // ".*"
 }
 
-#[derive(PartialEq,Debug)]
+#[derive(PartialEq,Debug, Clone, Copy)]
 pub struct Location {
   pub start:  usize,
   pub end:    usize,
@@ -42,7 +43,7 @@ impl Default for Location {
   }
 }
 
-#[derive(PartialEq,Debug)]
+#[derive(PartialEq,Debug, Clone)]
 pub struct Token 
 {
   pub token_t: TokenTyp,
@@ -59,14 +60,13 @@ impl Token {
 
 lazy_static!  {
   static ref KEYWORD_MAP : HashMap<String, TokenTyp> = 
-  HashMap::from(
-    [
-    (String::from("let") , TokenTyp::TokenLet),
-    (String::from("fn") , TokenTyp::TokenFnDecl),
-    (String::from("true") , TokenTyp::TokenTrue),
-    (String::from("false") , TokenTyp::TokenFalse),
-    ]
-  );
+  HashMap::from([
+    (String::from("let")    , TokenTyp::TokenLet    ),
+    (String::from("fn")     , TokenTyp::TokenFnDecl ),
+    (String::from("true")   , TokenTyp::TokenTrue   ),
+    (String::from("false")  , TokenTyp::TokenFalse  ),
+    (String::from("return") , TokenTyp::TokenReturn ),
+  ]);
 }
 
 fn get_string_keyword_typ(string: &String) -> Option<&TokenTyp>
@@ -119,11 +119,11 @@ impl Token
     }
 
     if Self::next_is(buffer, &[b'|',b'|']) {
-      return Self::only_type_token(TokenTyp::TokenBoolOR);
+      return Self::only_type_token(TokenTyp::TokenBoolOR, 2);
     }
 
     if Self::next_is(buffer, &[b'&',b'&']) {
-      return Self::only_type_token(TokenTyp::TokenBoolAND);
+      return Self::only_type_token(TokenTyp::TokenBoolAND, 2);
     }
 
     // ctrl char | operator
@@ -142,13 +142,13 @@ impl Token
       b'{'  => Self::one_char_token(TokenTyp::TokenLBrace, first_char),
       b'}'  => Self::one_char_token(TokenTyp::TokenRBrace, first_char),
       b'@'  => Self::parse_rustl_annotation(buffer),
-      b'!'  => Self::only_type_token(TokenTyp::TokenBoolNOT),
+      b'!'  => Self::only_type_token(TokenTyp::TokenBoolNOT, 1),
       _     => Err(())
     }
   }
 
-  fn only_type_token(tt : TokenTyp) -> Result<(Token, usize), ()> {
-    Ok((Token::new(tt, "".to_string()),2))
+  fn only_type_token(tt : TokenTyp, size: usize) -> Result<(Token, usize), ()> {
+    Ok((Token::new(tt, "".to_string()),size))
   }
 
   fn one_char_token(tt: TokenTyp, c: u8) -> Result<(Token, usize), ()> {

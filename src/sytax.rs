@@ -1,6 +1,6 @@
-use std::vec;
+use std::{io::Read, vec};
 
-use crate::lexer::{self, Token, TokenTyp};
+use crate::lexer::{self, Token, TokenTyp, Location};
 
 
 // --------------------------------- rustl sytax ----------------------------- 
@@ -55,6 +55,7 @@ pub enum AstKind {
   RustlAnnotation(String),
   FnCall(String, Vec<Box<Expr>>),
   FnDefine(String, Box<Expr>, Vec<Box<Expr>>),
+  ReturnExpr(Box<Expr>),
   LiteralTrue,
   LiteralFalse,
   AstNull
@@ -75,6 +76,8 @@ pub struct Parser
 {
   pub root: Option<Expr>,
 }
+
+type ParsingErr = (String, lexer::Location);
 
 #[derive(Debug)]
 pub struct ParsingCtx <'a> {
@@ -104,14 +107,24 @@ impl <'a> ParsingCtx<'a> {
     self.token_cursor < self.tokens.len()
   }
 
-  fn expect_cur_token(&mut self, token_typ: TokenTyp) -> Result<&Token, String> {
+  fn get_closed_token_position(&self) -> Option<Location>  {
+    if self.token_cursor < self.tokens.len() {
+      return Some(self.tokens.get(self.token_cursor).unwrap().location);
+    }
+
+    self.tokens.last().map(|t| t.location)
+  }
+
+  fn expect_cur_token(&mut self, token_typ: TokenTyp) -> Result<&Token, ParsingErr> {
     let Some(cur_token) = self.get_cur_token() else {
-      return Err(format!("cur token not exists on token expect {token_typ:#?}"))
+      return Err((
+        format!("cur token not exists on token expect {token_typ:#?}"), 
+        self.get_closed_token_position().unwrap_or_default()))
     };
 
     if cur_token.token_t == token_typ { Ok(cur_token) } 
     else { 
-      Err(format!(" token is not expect ({cur_token:#?}), real token typ {token_typ:#?}")) 
+      Err((format!(" token is not expect ({cur_token:#?}), real token typ {token_typ:#?}"), cur_token.location)) 
     }
   }
 
@@ -129,7 +142,8 @@ impl <'a> ParsingCtx<'a> {
   }
 }
 
-type ParsingResult = Result<Box<Expr>, String> ;
+
+type ParsingResult = Result<Box<Expr>, ParsingErr> ;
 
 impl Parser
 {
@@ -138,16 +152,42 @@ impl Parser
     Parser{root: None }
   }
 
-  pub fn parse(&mut self , ctx: &mut ParsingCtx) -> ()
+  pub fn parse(&mut self , ctx: &mut ParsingCtx, code: &String) -> ()
   {
     let mut statements: Vec<Box<Expr>> = vec![];
 
     loop {
+      if !ctx.has_token() {
+        break;
+      }
       match self.top_level_parse(ctx) {
         Ok(ast) => 
           statements.push(ast),
-        Err(_msg) => {
-          println!("{}", _msg);
+        Err((_msg, loc)) => {
+
+          let start = 
+            if loc.start > 20 { loc.start - 20 } 
+            else { loc.start };
+          
+          let end = 
+            if loc.end + 20  < code.len() { loc.end + 20 } 
+            else { loc.end };
+          let err_code = &code[start..end];
+          let error_line = err_code
+            .lines()
+            .into_iter();
+
+          println!("[rustl][error] parsing error in {}-{}\n", loc.start, loc.end);
+          println!("*********************************************************");
+          let mut position = 0;
+          for line in error_line {
+            println!("{}", line);
+            if position < 20 && position + line.len() >= 20 {
+              println!("{}^{}", " ".repeat(20 - position), _msg);
+            }
+            position += line.len();
+          }
+          println!("*********************************************************");
           break
         }
       }
@@ -158,10 +198,21 @@ impl Parser
     ()
   }
 
+  fn err(msg: &String, loc: lexer::Location) -> ParsingResult {
+    Err((msg.clone(), loc))
+  }
+
+  // top level statement
+  // 1. declaration
+  // 2. call expression
+  // 3. binary expression
+  // 4. function declaration
+  // 5. annotation
   fn top_level_parse(& mut self , ctx: &mut ParsingCtx) -> ParsingResult 
   {
     let Some(token) = ctx.get_cur_token() else {
-      return Err("token is empty".to_string());
+      let loc = ctx.get_closed_token_position();
+      return Self::err(&"token is empty".to_string(), loc.unwrap_or_default() );
     };
 
     let token_typ = token.token_t;
@@ -255,6 +306,7 @@ impl Parser
       }
 
       let token_typ = cur_token.token_t;
+      let location = cur_token.location.clone();
       ctx.consume_cur_token();
 
       match token_typ {
@@ -266,11 +318,18 @@ impl Parser
           let rhs = self.parse_bool_binary(ctx)?;
           lhs = Box::new(Expr{ kind: AstKind::BinaryOp("||".to_string(), lhs, rhs)});
         },
-        _ => return Err(format!("bool binary not support this operator {:?}", token_typ))
+        _ => return Self::err(&format!("bool binary not support this operator {:?}", token_typ), location)
       }
     }
 
     Ok(lhs)
+  }
+
+  fn parse_return_expression(&mut self, ctx: &mut ParsingCtx) -> ParsingResult {
+    ctx.expect_cur_token(TokenTyp::TokenReturn)?;
+    ctx.consume_cur_token();
+    let return_expression = self.parse_bool_binary(ctx)?;
+    Ok(Box::new(Expr{kind: AstKind::ReturnExpr(return_expression)}))
   }
 
   fn parse_expression_one(&mut self, ctx: &mut ParsingCtx) -> ParsingResult {
@@ -308,36 +367,54 @@ impl Parser
 
   fn parse_expression_one_token(&mut self, ctx: &mut ParsingCtx) -> ParsingResult {
     let Some(token) = ctx.get_cur_token() else {
-      return Err("first token not exists on parsing one token".to_string());
+      return Self::err(&"first token not exists on parsing one token".to_string(), ctx.get_closed_token_position().unwrap_or_default());
     };
 
-    let ast = match token.token_t {
-      lexer::TokenTyp::TokenName => 
-        Ok(AstKind::AstName(token.token_value.clone())) , 
+    let copy_token: Token = token.clone();
+    let token_typ = copy_token.token_t;
+    let ast  = match token_typ {
+      lexer::TokenTyp::TokenName => {
+        if ctx.next_token_typ(&[TokenTyp::TokenName, TokenTyp::TokenLParenthesis]) {
+        // parse to call
+          return self.parse_fn_call(ctx)
+        }
+        Ok(AstKind::AstName(copy_token.token_value.clone())) 
+      }, 
       lexer::TokenTyp::TokenNumLiteral => 
         Ok(AstKind::NumericLiteral(token.token_value.clone())) , 
       lexer::TokenTyp::TokenChar => 
         Ok(AstKind::CharLiteral(token.token_value.clone())) , 
+      lexer::TokenTyp::TokenBoolNOT => {
+        ctx.consume_cur_token();
+        Ok(AstKind::Unary("!".to_string(), self.parse_expression_one_token(ctx)?))
+      },
       lexer::TokenTyp::TokenStringLiteral => 
         Ok(AstKind::StringLiteral(token.token_value.clone())) , 
+      // true | false
       lexer::TokenTyp::TokenTrue => 
         Ok(AstKind::LiteralTrue),
       lexer::TokenTyp::TokenFalse => 
         Ok(AstKind::LiteralFalse),
+      // ($bool_binary_expression)
       lexer::TokenTyp::TokenLParenthesis => {
         ctx.consume_cur_token();
         let expr = self.parse_bool_binary(ctx)?;
         ctx.expect_cur_token(TokenTyp::TokenRParenthesis)?;
         Ok(expr.kind)
       },
-      _ => Err(format!( "parsing expression one token not match any token{token:#?}"))
+      _ =>{
+        Err((format!( "parsing expression one token not match any token{copy_token:#?}"), copy_token.location))
+      } ,
     }?;
 
-    ctx.consume_cur_token();
+    if token_typ != lexer::TokenTyp::TokenBoolNOT {
+      ctx.consume_cur_token();
+    }
 
     Ok(Box::new(Expr{ kind: ast }))
   }
 
+  // let $name = $expression;
   fn parse_decl(& mut self , ctx: &mut ParsingCtx) -> ParsingResult
   {
     ctx.expect_cur_token(TokenTyp::TokenLet)?;
@@ -352,6 +429,7 @@ impl Parser
     Ok(Box::new(Expr{kind:AstKind::Let(variable_name, assigned_expression)}))
   }
 
+  // @$name
   fn parse_rustl_annotation(& mut self , ctx: &mut ParsingCtx) -> ParsingResult {
     // println!("parse rustl annotation");
     let annotation = ctx.expect_cur_token(TokenTyp::TokenRustlAnnotation)?;
@@ -360,6 +438,7 @@ impl Parser
     Ok(annotation_ast)
   }
 
+  // fn $name ( $args )
   fn parse_fn_decl(& mut self , ctx: &mut ParsingCtx) -> ParsingResult {
     let _keyword_fn /* fn */= ctx.expect_cur_token(TokenTyp::TokenFnDecl)?;
     ctx.consume_cur_token();
@@ -407,16 +486,18 @@ impl Parser
   fn parse_statement_in_fn(& mut self , ctx: &mut ParsingCtx) -> ParsingResult {
     
     let Some(token) = ctx.get_cur_token() else {
-      return Err("token is empty".to_string());
+      return Self::err(&"token is empty".to_string(), ctx.get_closed_token_position().unwrap_or_default());
     };
 
     let token_typ = token.token_t;
     let res =  match token_typ {
       lexer::TokenTyp::TokenLet => self.parse_decl(ctx),
+      lexer::TokenTyp::TokenReturn => 
+        self.parse_return_expression(ctx),
       lexer::TokenTyp::TokenFnDecl => 
-        Err("fn declaration should not in fn definition".to_string()),
+        Err(("fn declaration should not in fn definition".to_string(), token.location.clone())),
       lexer::TokenTyp::TokenRustlAnnotation => 
-        Err("annotation should not in fn definition".to_string()),
+        Err(("annotation should not in fn definition".to_string(), token.location.clone())),
       _ => {
         if ctx.next_token_typ(&[TokenTyp::TokenName, TokenTyp::TokenLParenthesis]) {
           // parse to call
@@ -467,6 +548,7 @@ impl Parser
     Ok( Box::new(Expr{kind: AstKind::FnDeclArgs(arg_decl_list)}) )
   }
 
+  // $name ( $args )
   fn parse_fn_call(&mut self , ctx: &mut ParsingCtx) -> ParsingResult {
     let call_identifier = ctx.get_cur_token().unwrap().token_value.clone();
     ctx.consume_cur_token();
@@ -494,7 +576,7 @@ impl Parser
     }
 
     if !ctx.next_token_typ(&[TokenTyp::TokenRParenthesis]) {
-      return Err("function call parsing has no RParenthesis".to_string())
+      return Err(("function call parsing has no right parenthesis. example: function()".to_string(), ctx.get_closed_token_position().unwrap_or_default()))
     }
 
     ctx.consume_cur_token();
