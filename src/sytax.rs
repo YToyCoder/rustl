@@ -60,6 +60,8 @@ pub enum AstKind {
   FnDefine(String, Box<Expr>, Vec<Box<Expr>>),
   ReturnExpr(Box<Expr>),
   ObjectLiteral(Vec<(String,Box<Expr>)>),
+  FieldSet(Box<Expr>,String, Box<Expr>),
+  FieldGet(Box<Expr>, String),
   LiteralTrue,
   LiteralFalse,
   AstNull
@@ -253,7 +255,12 @@ impl Parser
           // parse to call
           self.parse_fn_call(ctx)
         }else {
-          self.parse_expression(ctx)
+          let prefix_res = self.parse_expression(ctx);
+
+          if ctx.next_token_typ(&[TokenTyp::TokenDot]) {
+            self.parse_field_set(ctx, prefix_res?)
+          }
+          else { prefix_res }
         }
       },
     }?;
@@ -407,7 +414,36 @@ impl Parser
         // parse to call
           return self.parse_fn_call(ctx)
         }
-        Ok(AstKind::AstName(copy_token.token_value.clone())) 
+
+        ctx.consume_cur_token();
+        let mut expr = AstKind::AstName(copy_token.token_value.clone());
+        loop {
+          if !ctx.has_token() {
+            break;
+          }
+
+          // $expression . $name = $expression
+          if ctx.next_token_typ(&[TokenTyp::TokenDot, TokenTyp::TokenName, TokenTyp::TokenAssign]) {
+            // it's field set
+            break;
+          }
+
+          let Ok(token) = ctx.expect_cur_token(TokenTyp::TokenDot) else {
+            break;
+          };
+          let loc = token.location;
+          ctx.consume_cur_token();
+
+          let Ok(token) = ctx.expect_cur_token(TokenTyp::TokenName) else {
+            return Self::err(&"parseing field get error".to_string(), loc)
+          };
+          let token_name = token.token_value.clone();
+          ctx.consume_cur_token();
+
+          expr = AstKind::FieldGet(Self::boxed_expression(expr, loc) , token_name)
+        }
+
+        Ok(expr) 
       }, 
       lexer::TokenTyp::TokenNumLiteral => 
         Ok(AstKind::NumericLiteral(token.token_value.clone())) , 
@@ -436,7 +472,11 @@ impl Parser
       } ,
     }?;
 
-    if token_typ != lexer::TokenTyp::TokenBoolNOT {
+    if match token_typ {
+      lexer::TokenTyp::TokenBoolNOT |
+      lexer::TokenTyp::TokenName => false, 
+      _ => true
+    } {
       ctx.consume_cur_token();
     }
 
@@ -540,7 +580,12 @@ impl Parser
           // parse to call
           self.parse_fn_call(ctx)
         }else {
-          self.parse_expression(ctx)
+          let prefix_res = self.parse_expression(ctx);
+
+          if ctx.next_token_typ(&[TokenTyp::TokenDot]) {
+            self.parse_field_set(ctx, prefix_res?)
+          }
+          else { prefix_res }
         }
       },
     }?;
@@ -658,4 +703,18 @@ impl Parser
     Ok(Self::boxed_expression( AstKind::ObjectLiteral(fields), Location{ start: start_location, end: end_location}))
   }
 
+  fn parse_field_set(&mut self, ctx: &mut ParsingCtx, prefix: Box<Expr>) -> ParsingResult {
+    let location = ctx.expect_cur_token(TokenTyp::TokenDot)?.location;
+    ctx.consume_cur_token();
+    let field_name = ctx.expect_cur_token(TokenTyp::TokenName)?.token_value.clone();
+    ctx.consume_cur_token();
+
+    ctx.expect_cur_token(TokenTyp::TokenAssign)?;
+    ctx.consume_cur_token();
+
+    let expr = self.parse_expression(ctx)?;
+    Ok(Self::boxed_expression(AstKind::FieldSet(prefix, field_name, expr), location))
+  }
+
+  // todo: parsing == , <= , >=
 }

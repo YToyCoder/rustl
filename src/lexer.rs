@@ -9,26 +9,27 @@ pub enum TokenTyp
   TokenRParenthesis, // )
   TokenLBrace, // {
   TokenRBrace, // }
-  TokenEq,
-  TokenAssign,
-  TokenBitOr,
+  TokenEq,              // ==
+  TokenAssign,          // =
+  TokenBitOr,           // |
   TokenChar,
-  TokenAdd,
-  TokenSub,
-  TokenMul,
-  TokenDiv,
-  TokenTrue,
-  TokenFalse,
-  TokenBoolOR,  // ||
-  TokenBoolNOT, // !
-  TokenBoolAND, // &&
+  TokenAdd,             // +
+  TokenSub,             // - 
+  TokenMul,             // *
+  TokenDiv,             // /
+  TokenTrue,            // true
+  TokenFalse,           // false
+  TokenBoolOR,          // ||
+  TokenBoolNOT,         // !
+  TokenBoolAND,         // &&
   TokenStatementEnd,
   TokenRustlAnnotation, // @$name
-  TokenReturn, // return
+  TokenReturn,          // return
   TokenFnDecl,
-  TokenComma, // ,
-  TokenColon, // :
-  TokenStringLiteral, // ".*"
+  TokenDot,             // .
+  TokenComma,           // ,
+  TokenColon,           // :
+  TokenStringLiteral,   // ".*"
 }
 
 #[derive(PartialEq,Debug, Clone, Copy)]
@@ -88,8 +89,7 @@ impl Token
     let first_char = buffer[0];
 
     // parse token name
-    if first_char.is_ascii_alphabetic() || first_char == b'_' 
-    {
+    if first_char.is_ascii_alphabetic() || first_char == b'_' {
       return Self::parse_name(buffer);
     }
 
@@ -126,6 +126,10 @@ impl Token
       return Self::only_type_token(TokenTyp::TokenBoolAND, 2);
     }
 
+    if Self::next_is(buffer, &[b'=',b'=']) {
+      return Self::only_type_token(TokenTyp::TokenEq, 2);
+    }
+
     // ctrl char | operator
     match first_char {
       b'='  => Self::one_char_token(TokenTyp::TokenAssign, first_char), 
@@ -141,6 +145,7 @@ impl Token
       b':'  => Self::one_char_token(TokenTyp::TokenColon, first_char),
       b'{'  => Self::one_char_token(TokenTyp::TokenLBrace, first_char),
       b'}'  => Self::one_char_token(TokenTyp::TokenRBrace, first_char),
+      b'.'  => Self::one_char_token(TokenTyp::TokenDot, first_char),
       b'@'  => Self::parse_rustl_annotation(buffer),
       b'!'  => Self::only_type_token(TokenTyp::TokenBoolNOT, 1),
       _     => Err(())
@@ -172,20 +177,12 @@ impl Token
       return None;
     }
 
-    let mut read_cursor = 2;
-    loop {
+    let is_end_char = |c: u8| c == b'\'';
 
-      if read_cursor >= buffer.len() 
-      {
-        break;
-      }
-
-      if buffer[read_cursor] == b'\'' {
-        break;
-      }
-
-      read_cursor += 1;
-    }
+    let Some(read_cursor) = Self::parse_till(buffer, 1, is_end_char) 
+    else {
+      return None;
+    };
 
     if read_cursor >= buffer.len() || buffer[read_cursor] != b'\'' {
       return None;
@@ -197,6 +194,7 @@ impl Token
     }
   }
 
+  // ".*"
   fn parse_string_literal(buffer:& [u8]) -> Result<(Token, usize), ()>  {
     let is_string_literal_end = |c: u8| { c == b'\"' };
     match Self::parse_till(buffer, 1, is_string_literal_end)  {
@@ -206,31 +204,21 @@ impl Token
     }
   }
 
+  // $name
   fn parse_name(buffer:& [u8]) -> Result<(Token, usize), ()> {
-    let mut read_cursor = 1;
-    loop 
-    {
-      if read_cursor >= buffer.len() 
-      {
-        break;
-      }
+    let is_not_right_char = |c : u8| {
+      c.is_ascii_whitespace() || !Self::char_is_token_name(c)
+    };
 
-      let cur_char = buffer[read_cursor];
-      if cur_char.is_ascii_whitespace() || !Self::char_is_token_name(cur_char)
-      {
-        break;
-      }
-
-      read_cursor = read_cursor + 1;
-    }
+    let Some(read_cursor) = Self::parse_till(buffer, 0, is_not_right_char) 
+    else { return Err(()) };
 
     match String::from_utf8(buffer.split_at(read_cursor).0.to_vec()) {
       Ok(token_name) => { 
         if let Some(typ) = get_string_keyword_typ(&token_name) {
           Ok((Token::new(*typ, token_name), read_cursor))
         }
-        else 
-        {
+        else {
           Ok((Token::new(TokenTyp::TokenName, token_name), read_cursor))
         }
       } 
@@ -238,8 +226,8 @@ impl Token
     }
   }
 
-  fn parse_rustl_annotation(buffer:& [u8]) -> Result<(Token, usize), ()> 
-  {
+  // @$name
+  fn parse_rustl_annotation(buffer:& [u8]) -> Result<(Token, usize), ()> {
     let not_match_name = |c: u8| { c.is_ascii_whitespace() || !Self::char_is_token_name(c) };
     match Self::parse_till(buffer, 1, not_match_name)  {
       None => Err(()),
@@ -271,36 +259,21 @@ impl Token
     else { Some(read_cursor) }
   }
 
+  // integer | float
   fn parse_numeric(buffer:& [u8]) -> Result<(Token, usize), ()> {
     let mut read_cursor = 1;
 
-    let read_numeric = |r_cursor : usize| -> usize
-    {
-
-      let mut cursor = r_cursor;
-      loop 
-      {
-        if cursor >= buffer.len() 
-        {
-          break;
-        }
-
-        let cur_char = buffer[cursor];
-        if !cur_char.is_ascii_digit()
-        {
-          break;
-        }
-
-        cursor = cursor + 1;
+    let is_not_numeric = |c: u8| !c.is_ascii_digit();
+    let read_numeric = |r_cursor : usize| -> usize {
+      match Self::parse_till(buffer, r_cursor, is_not_numeric) {
+        Some(cursor) => cursor,
+        _ => r_cursor,
       }
-
-      cursor
     };
 
     read_cursor =  read_numeric(read_cursor);
 
-    if read_cursor < buffer.len() && buffer[read_cursor] == b'.'
-    {
+    if read_cursor < buffer.len() && buffer[read_cursor] == b'.' {
       read_cursor = read_numeric(read_cursor + 1)
     }
 

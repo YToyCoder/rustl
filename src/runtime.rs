@@ -358,5 +358,43 @@ fn eval_expression<'a: 'b, 'b >(ast:& Box<Expr>, cur_scope: &'a mut dyn Scope, c
       }
       Some(new_object)
     },
+    AstKind::FieldSet(prefix, field_name, value) => {
+      let prefix_value = eval_expression(prefix, cur_scope, ctx)?;
+      let value_result = eval_expression(value, cur_scope, ctx)?;
+      match prefix_value {
+        RustlV::RustlObject(object) 
+          => {
+            object.borrow_mut()
+                .set_field(field_name, value_result);
+            None
+          }
+        _ => {
+          cur_scope.finish();
+          cur_scope.set_error(&RustlV::new_string(&format!("try to set field in which not object")));
+          None
+        },
+      }
+    },
+    AstKind::FieldGet(expr, field_name) => {
+      let Some(value) = eval_expression(expr, cur_scope, ctx) else {
+        if !cur_scope.finished() {
+          cur_scope.finish();
+          cur_scope.set_error(&RustlV::new_string(&format!("field get error, expression eval error")));
+        }
+        return None
+      };
+
+      match value {
+        RustlV::RustlObject(object) 
+          => object.borrow_mut()
+                .get_field(field_name)
+                .and_then(|v| Some(v.clone())),
+        _ => {
+          cur_scope.finish();
+          cur_scope.set_error(&RustlV::new_string(&format!("try to get field in which not object")));
+          None
+        },
+      }
+    },
   }
 }
