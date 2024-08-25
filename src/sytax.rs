@@ -1,4 +1,4 @@
-use std::{io::Read, vec};
+use std::io::BufRead;
 
 use crate::lexer::{self, Token, TokenTyp, Location};
 
@@ -29,6 +29,9 @@ use crate::lexer::{self, Token, TokenTyp, Location};
 // function_statement_list : 
 //      $function_statement |
 //      $function_statement $function_statement_list
+// object_literal: { $name: $expression ... }
+// object_field_get: $name.$field_name
+// object_field_set: $name.$field.name = $expression;
 // ---------------------------------------------------------------------------- 
 // --------------------------------- example ---------------------------------- 
 // let name = "string_literal";
@@ -56,6 +59,7 @@ pub enum AstKind {
   FnCall(String, Vec<Box<Expr>>),
   FnDefine(String, Box<Expr>, Vec<Box<Expr>>),
   ReturnExpr(Box<Expr>),
+  ObjectLiteral(Vec<(String,Box<Expr>)>),
   LiteralTrue,
   LiteralFalse,
   AstNull
@@ -64,11 +68,28 @@ pub enum AstKind {
 #[derive(Debug, Clone)]
 pub struct Expr {
   pub kind: AstKind,
+  pub loc: lexer::Location,
 }
 
 impl Expr {
   pub fn ast_null() -> Box< Expr > {
-    Box::new(Expr{ kind: AstKind::AstNull })
+    Box::new(Expr{ kind: AstKind::AstNull, loc: Default::default() })
+  }
+
+  pub fn new(kind: AstKind ) -> Expr {
+    Expr{ kind, loc: Default::default() }
+  }
+
+  pub fn new_with_location(kind: AstKind, loc: lexer::Location) -> Expr {
+    Expr{kind, loc }
+  }
+
+  pub fn start(&mut self, start_pos: usize) -> () {
+    self.loc.start = start_pos;
+  }
+
+  pub fn end(&mut self, end_pos: usize) -> () {
+    self.loc.end = end_pos;
   }
 }
 
@@ -152,7 +173,11 @@ impl Parser
     Parser{root: None }
   }
 
-  pub fn parse(&mut self , ctx: &mut ParsingCtx, code: &String) -> ()
+  fn boxed_expression(kind: AstKind, loc: lexer::Location) -> Box<Expr> {
+    Box::new(Expr::new_with_location(kind, loc))
+  }
+
+  pub fn parse(&mut self , ctx: &mut ParsingCtx, code: &[u8]) -> Result<(),()>
   {
     let mut statements: Vec<Box<Expr>> = vec![];
 
@@ -181,21 +206,24 @@ impl Parser
           println!("*********************************************************");
           let mut position = 0;
           for line in error_line {
-            println!("{}", line);
-            if position < 20 && position + line.len() >= 20 {
+            let Ok(line_string) = line else {
+              break;
+            };
+            println!("{}", line_string);
+            if position < 20 && position + line_string.len() >= 20 {
               println!("{}^{}", " ".repeat(20 - position), _msg);
             }
-            position += line.len();
+            position += line_string.len();
           }
           println!("*********************************************************");
-          break
+          return Err(())
         }
       }
     }
 
-    self.root = Some(Expr{ kind:AstKind::ProgramAst(statements)} );
+    self.root = Some(Expr::new(AstKind::ProgramAst(statements) ));
 
-    ()
+    Ok(())
   }
 
   fn err(msg: &String, loc: lexer::Location) -> ParsingResult {
@@ -225,7 +253,7 @@ impl Parser
           // parse to call
           self.parse_fn_call(ctx)
         }else {
-          self.parse_bool_binary(ctx)
+          self.parse_expression(ctx)
         }
       },
     }?;
@@ -276,7 +304,7 @@ impl Parser
       ctx.consume_cur_token();
 
       let rhs = self.parse_expression_one(ctx)?;
-      lhs = Box::new(Expr{ kind: AstKind::BinaryOp(op_string, lhs, rhs)} );
+      lhs = Box::new(Expr::new(AstKind::BinaryOp(op_string, lhs, rhs)) );
     }
 
     Ok(lhs)
@@ -312,11 +340,11 @@ impl Parser
       match token_typ {
         lexer::TokenTyp::TokenBoolAND => {
           let rhs = self.parse_expression_one_token(ctx)?;
-          lhs = Box::new(Expr{ kind: AstKind::BinaryOp("&&".to_string(), lhs, rhs)});
+          lhs = Self::boxed_expression(AstKind::BinaryOp("&&".to_string(), lhs, rhs), location);
         },
         lexer::TokenTyp::TokenBoolOR  => {
           let rhs = self.parse_bool_binary(ctx)?;
-          lhs = Box::new(Expr{ kind: AstKind::BinaryOp("||".to_string(), lhs, rhs)});
+          lhs = Self::boxed_expression(AstKind::BinaryOp("||".to_string(), lhs, rhs), location);
         },
         _ => return Self::err(&format!("bool binary not support this operator {:?}", token_typ), location)
       }
@@ -326,10 +354,10 @@ impl Parser
   }
 
   fn parse_return_expression(&mut self, ctx: &mut ParsingCtx) -> ParsingResult {
-    ctx.expect_cur_token(TokenTyp::TokenReturn)?;
+    let location = ctx.expect_cur_token(TokenTyp::TokenReturn)?.location;
     ctx.consume_cur_token();
-    let return_expression = self.parse_bool_binary(ctx)?;
-    Ok(Box::new(Expr{kind: AstKind::ReturnExpr(return_expression)}))
+    let return_expression = self.parse_expression(ctx)?;
+    Ok(Self::boxed_expression( AstKind::ReturnExpr(return_expression), location ))
   }
 
   fn parse_expression_one(&mut self, ctx: &mut ParsingCtx) -> ParsingResult {
@@ -356,10 +384,11 @@ impl Parser
       }
 
       let op_string = cur_token.token_value.to_string();
+      let location = cur_token.location;
       ctx.consume_cur_token();
 
       let rhs = self.parse_expression_one_token(ctx)?;
-      lhs = Box::new(Expr{ kind: AstKind::BinaryOp(op_string, lhs, rhs)});
+      lhs = Self::boxed_expression( AstKind::BinaryOp(op_string, lhs, rhs), location);
     }
 
     Ok(lhs)
@@ -403,7 +432,7 @@ impl Parser
         Ok(expr.kind)
       },
       _ =>{
-        Err((format!( "parsing expression one token not match any token{copy_token:#?}"), copy_token.location))
+        Err((format!( "parsing expression one token not match any token {copy_token:#?}"), copy_token.location))
       } ,
     }?;
 
@@ -411,13 +440,13 @@ impl Parser
       ctx.consume_cur_token();
     }
 
-    Ok(Box::new(Expr{ kind: ast }))
+    Ok(Self::boxed_expression( ast , copy_token.location))
   }
 
   // let $name = $expression;
   fn parse_decl(& mut self , ctx: &mut ParsingCtx) -> ParsingResult
   {
-    ctx.expect_cur_token(TokenTyp::TokenLet)?;
+    let location = ctx.expect_cur_token(TokenTyp::TokenLet)?.location;
     ctx.consume_cur_token();
     let variable_name = ctx.expect_cur_token(TokenTyp::TokenName)?.token_value.clone();
     ctx.consume_cur_token();
@@ -425,22 +454,30 @@ impl Parser
     let _assign_operation = ctx.expect_cur_token(TokenTyp::TokenAssign)?;
 
     ctx.consume_cur_token();
-    let assigned_expression = self.parse_bool_binary(ctx)?;
-    Ok(Box::new(Expr{kind:AstKind::Let(variable_name, assigned_expression)}))
+    let assigned_expression = self.parse_expression(ctx)?;
+    Ok(Self::boxed_expression(AstKind::Let(variable_name, assigned_expression), location))
   }
 
   // @$name
   fn parse_rustl_annotation(& mut self , ctx: &mut ParsingCtx) -> ParsingResult {
     // println!("parse rustl annotation");
     let annotation = ctx.expect_cur_token(TokenTyp::TokenRustlAnnotation)?;
-    let annotation_ast =Box::new(Expr{kind:AstKind::CharLiteral(annotation.token_value.clone())});
+    let annotation_ast = Self::boxed_expression(AstKind::CharLiteral(annotation.token_value.clone()), annotation.location);
     ctx.consume_cur_token();
     Ok(annotation_ast)
   }
 
+  fn parse_expression(&mut self, ctx: &mut ParsingCtx) -> ParsingResult {
+    let Ok(_) = ctx.expect_cur_token(TokenTyp::TokenLBrace) else {
+      return self.parse_bool_binary(ctx);
+    };
+
+    self.parse_object_literal(ctx)
+  }
+
   // fn $name ( $args )
   fn parse_fn_decl(& mut self , ctx: &mut ParsingCtx) -> ParsingResult {
-    let _keyword_fn /* fn */= ctx.expect_cur_token(TokenTyp::TokenFnDecl)?;
+    let _keyword_fn_location /* fn */= ctx.expect_cur_token(TokenTyp::TokenFnDecl)?.location;
     ctx.consume_cur_token();
     let fn_name = ctx.expect_cur_token(TokenTyp::TokenName)?.token_value.clone();
     ctx.consume_cur_token();
@@ -449,7 +486,7 @@ impl Parser
 
     // try to parse fn body
     if !ctx.next_token_typ(&[TokenTyp::TokenLBrace]) {
-      let new_ast = Box::new(Expr{kind: AstKind::FnDeclAst(None, fn_name.to_string(),  arg_list_ast )});
+      let new_ast = Self::boxed_expression(AstKind::FnDeclAst(None, fn_name.to_string(),  arg_list_ast ), _keyword_fn_location);
       return Ok(new_ast);
     }
 
@@ -479,7 +516,7 @@ impl Parser
     ctx.expect_cur_token(TokenTyp::TokenRBrace)?;
     ctx.consume_cur_token();
 
-    let new_ast = Box::new(Expr{kind: AstKind::FnDefine(fn_name.to_string(),  arg_list_ast, fn_statements)});
+    let new_ast = Self::boxed_expression( AstKind::FnDefine(fn_name.to_string(),  arg_list_ast, fn_statements), _keyword_fn_location);
     Ok(new_ast)
   }
 
@@ -503,7 +540,7 @@ impl Parser
           // parse to call
           self.parse_fn_call(ctx)
         }else {
-          self.parse_binary_expression(ctx)
+          self.parse_expression(ctx)
         }
       },
     }?;
@@ -515,7 +552,7 @@ impl Parser
   }
 
   fn parse_fn_decl_arg(&mut self , ctx: &mut ParsingCtx)  -> ParsingResult {
-    let _left_parent = ctx.expect_cur_token(TokenTyp::TokenLParenthesis)?;
+    let location = ctx.expect_cur_token(TokenTyp::TokenLParenthesis)?.location;
     ctx.consume_cur_token();
 
     let mut arg_decl_list: Vec<Box<Expr>> = vec![];
@@ -529,9 +566,10 @@ impl Parser
         break;
       };
       let arg_name = token.token_value.clone();
+      let location = token.location;
       ctx.consume_cur_token();
 
-      arg_decl_list.push(Box::new(Expr{kind: AstKind::AstName(arg_name)}));
+      arg_decl_list.push(Self::boxed_expression( AstKind::AstName(arg_name), location));
       if !ctx.has_token() {
         break;
       }
@@ -545,12 +583,13 @@ impl Parser
 
     ctx.consume_cur_token();
 
-    Ok( Box::new(Expr{kind: AstKind::FnDeclArgs(arg_decl_list)}) )
+    Ok( Self::boxed_expression( AstKind::FnDeclArgs(arg_decl_list), location) )
   }
 
   // $name ( $args )
   fn parse_fn_call(&mut self , ctx: &mut ParsingCtx) -> ParsingResult {
     let call_identifier = ctx.get_cur_token().unwrap().token_value.clone();
+    let location = ctx.get_cur_token().unwrap().location;
     ctx.consume_cur_token();
     ctx.expect_cur_token(TokenTyp::TokenLParenthesis)?;
     ctx.consume_cur_token();
@@ -581,7 +620,42 @@ impl Parser
 
     ctx.consume_cur_token();
 
-    Ok(Box::new(Expr{kind: AstKind::FnCall(call_identifier, call_args)}))
+    Ok(Self::boxed_expression( AstKind::FnCall(call_identifier, call_args), location))
+  }
+
+  fn parse_object_literal(&mut self, ctx: &mut ParsingCtx) -> ParsingResult {
+    let start_location = ctx.expect_cur_token(TokenTyp::TokenLBrace)?.location.start;
+    ctx.consume_cur_token();
+
+    let mut fields = vec![];
+    loop {
+      if !ctx.has_token() {
+        break;
+      }
+
+      if ctx.next_token_typ(&[TokenTyp::TokenRBrace]){
+        break;
+      }
+
+      let field_name = ctx.expect_cur_token(TokenTyp::TokenName)?.token_value.clone();
+      ctx.consume_cur_token();
+      ctx.expect_cur_token(TokenTyp::TokenColon)?;
+      ctx.consume_cur_token();
+
+      let value = self.parse_expression(ctx)?;
+      fields.push((field_name, value));
+
+      if ctx.next_token_typ(&[TokenTyp::TokenRBrace]){
+        break;
+      }
+
+      ctx.expect_cur_token(TokenTyp::TokenComma)?;
+      ctx.consume_cur_token();
+    }
+
+    let end_location = ctx.expect_cur_token(TokenTyp::TokenRBrace)?.location.end;
+    ctx.consume_cur_token();
+    Ok(Self::boxed_expression( AstKind::ObjectLiteral(fields), Location{ start: start_location, end: end_location}))
   }
 
 }

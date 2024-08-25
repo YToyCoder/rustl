@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Debug, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, fmt::{Debug, Display}, rc::Rc};
 
 use crate::sytax::{AstKind, Expr};
 
@@ -8,15 +8,26 @@ struct RustlObj
   fields: HashMap<String, RustlV>
 }
 
-impl RustlObj {
-  // pub fn get_field(& self,field_name: impl Into<String>) -> Option<&Rc<RustlValue>> {
-  //   self.fields.get(&field_name.into())
-  // }
+impl Display for RustlObj {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    let mut fmt: &mut std::fmt::DebugStruct = &mut f.debug_struct("Object");
+    for (name, value) in &self.fields {
+      fmt = fmt.field(&name, &value)
+    }
 
-  // pub fn set_field(&mut self, field_name: impl Into<String>, value: Rc<RustlValue>) -> () {
-  //   self.fields.insert(field_name.into(), value);
-  //   ()
-  // }
+    fmt.finish()
+  }
+}
+
+impl RustlObj {
+  pub fn get_field(& self,field_name: impl Into<String>) -> Option<&RustlV> {
+    self.fields.get(&field_name.into())
+  }
+
+  pub fn set_field(&mut self, field_name: impl Into<String>, value: RustlV) -> () {
+    self.fields.insert(field_name.into(), value);
+    ()
+  }
 }
 
 impl RustlObj {
@@ -63,7 +74,7 @@ enum RustlV {
   RustlChar(char),
   RustlBool(bool),
   RustlString(String),
-  RustlObject(Rc<RustlObj>),
+  RustlObject(Rc<RefCell<RustlObj>>),
 }
 
 impl RustlV {
@@ -74,8 +85,12 @@ impl RustlV {
     RustlV::RustlString(str.clone())
   }
 
+  pub fn new_char(c: char) -> RustlV {
+    RustlV::RustlChar(c)
+  }
+
   pub fn new_obj() -> RustlV {
-    RustlV::RustlObject(Rc::new(RustlObj::empty()))
+    RustlV::RustlObject(Rc::new(RefCell::new(RustlObj::empty())))
   }
 
   pub fn is_support_add_op(&self) -> bool {
@@ -163,7 +178,7 @@ impl RustlV {
       RustlV::RustlBool(b) => 
         b.to_string(),
       RustlV::RustlObject(obj) => 
-        "{Obj}".to_string(),
+        obj.borrow().to_string(),
       RustlV::RustlString(string) => 
         string.to_string(),
     }
@@ -200,15 +215,16 @@ fn rustl_add(l:& RustlV, r:& RustlV) -> Option<RustlV>
     return None;
   };
 
-  if l.is_char() || r.is_char() {
-    return Some(RustlV::new_int(l.to_int_value()? + r.to_int_value()?));
-  };
-
   if l.is_string() || r.is_string() {
     return Some(RustlV::new_string(
      &format!("{}{}", l.to_string(), r.to_string()) 
     ));
   };
+
+  if l.is_char() || r.is_char() {
+    return Some(RustlV::new_int(l.to_int_value()? + r.to_int_value()?));
+  };
+
 
   l.numeric_add(r)
 }
@@ -454,7 +470,7 @@ fn eval_expression<'a: 'b, 'b >(ast:& Box<Expr>, cur_scope: &'a mut dyn Scope, c
       Some(value)
     } ,
     AstKind::CharLiteral(char_string) => 
-      Some(RustlV::new_string(char_string)),
+      Some(RustlV::new_char(*char_string.as_bytes().get(1).unwrap() as char)),
     AstKind::Let(name, value_ast) => {
       let value = eval_expression(&value_ast, cur_scope, ctx)?;
       cur_scope.set_local_variable(name, &value);
@@ -496,6 +512,10 @@ fn eval_expression<'a: 'b, 'b >(ast:& Box<Expr>, cur_scope: &'a mut dyn Scope, c
       let mut args_value: Vec<RustlV> = vec![];
       for arg in args {
         let r = eval_expression(arg, cur_scope, ctx);
+        if cur_scope.finished() {
+          return None;
+        }
+
         // error !
         if r.is_none() && cur_scope.has_error() {
           cur_scope.finish();
@@ -561,8 +581,7 @@ fn eval_expression<'a: 'b, 'b >(ast:& Box<Expr>, cur_scope: &'a mut dyn Scope, c
       Some(RustlV::new_bool(false)),
     AstKind::Unary(unary_op, expr) => {
       match unary_op as &str {
-        "!" => 
-          Some(RustlV::new_bool(!eval_expression(expr, cur_scope, ctx)?.to_bool()?)),
+        "!" => eval_expression(expr, cur_scope, ctx)?.bool_not(),
         _ => {
           cur_scope.finish();
           cur_scope.set_error(&RustlV::new_string(&format!("not support unary operator{}", unary_op.clone())));
@@ -575,5 +594,16 @@ fn eval_expression<'a: 'b, 'b >(ast:& Box<Expr>, cur_scope: &'a mut dyn Scope, c
       cur_scope.finish();
       Some(eval_result)
     } ,
+    AstKind::ObjectLiteral(_fields) => {
+      let mut new_object = RustlV::new_obj();
+      let RustlV::RustlObject(obj) = &mut new_object else {
+        // should not reach here
+        return None
+      };
+      for (field_name, value) in _fields {
+        obj.borrow_mut().set_field(field_name, eval_expression(value, cur_scope, ctx)? )
+      }
+      Some(new_object)
+    },
   }
 }

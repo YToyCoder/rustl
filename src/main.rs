@@ -15,6 +15,7 @@ fn main() {
   "
 let string_variable = \"string_literal\";
 let b = 'a';
+print( \"b variable \" + b );
 let c = 4.123 + 5 / 3 * 3 - 0.1;
 @builtin
 fn print (arg);
@@ -28,17 +29,22 @@ fn define_fn(not_used_arg) {
 }
 print( define_fn() );
 print( !true || (false && false) );
-call(b);
-let k = true && string_var;
+let k = true && string_variable;
 define_fn(123);
 print(k);
+let obj = {name: \"obj name\", loc_start: 1};
+print(obj);
 ".to_string();
-  parse_to_token(&mut read_token, unsafe { parse_code.as_bytes_mut() });
+  let code_u8_arr =  unsafe { parse_code.as_bytes_mut() };
+  parse_to_token(&mut read_token, code_u8_arr);
 
   let mut parser = sytax::Parser::new();
   let mut ctx = sytax::ParsingCtx::new(&read_token);
   // println!("{ctx:#?}");
-  parser.parse(&mut ctx, &parse_code);
+  if parser.parse(&mut ctx, &code_u8_arr).is_err(){
+    return ();
+  }
+
   // println!("ast: \n{:#?}", parser.root);
   let Some(mut ast) = parser.root else {
     return ();
