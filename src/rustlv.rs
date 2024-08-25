@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashMap, fmt::{Debug, Display}, rc::Rc};
+use std::{ cell::RefCell, collections::HashMap, fmt::{Debug, Display}, rc::Rc};
 
 use crate::sytax::{AstKind, Expr};
 
@@ -35,7 +35,7 @@ impl RustlObj {
 }
 
 macro_rules! numeric_op_define {
-  ($op:tt $name:tt) => {
+  ($op:tt $name:tt ) => {
     pub fn $name(&self, other:& Self) -> Option< Self >
     {
       if !self.is_numeric() || !other.is_numeric() {
@@ -45,14 +45,35 @@ macro_rules! numeric_op_define {
       let new_v = 
         if self.is_float() || other.is_float() {
           Self::new_float(
-            self.to_float()? + other.to_float()?)
+            self.to_float()? $op other.to_float()?)
         }
         else {
           Self::new_int(
-            self.to_int_value()? +other.to_int_value()?)
+            self.to_int_value()? $op other.to_int_value()?)
         };
 
       Some(new_v)
+    }
+  };
+}
+
+macro_rules! numeric_cmp_define {
+  ($op:tt $name:tt ) => {
+    pub fn $name(&self, other:& Self) -> Option< Self >
+    {
+      if !self.is_numeric() || !other.is_numeric() {
+        return None
+      };
+
+      let new_v = 
+        if self.is_float() || other.is_float() {
+            self.to_float()? $op other.to_float()?
+        }
+        else {
+            self.to_int_value()? $op other.to_int_value()?
+        };
+
+      Some(Self::new_bool(new_v))
     }
   };
 }
@@ -75,6 +96,22 @@ pub enum RustlV {
   RustlObject(Rc<RefCell<RustlObj>>),
 }
 
+impl PartialEq for RustlV {
+  fn eq(&self, other: &Self) -> bool {
+    match (self, other) {
+        (Self::RustlInt(l0), Self::RustlInt(r0)) => l0 == r0,
+        (Self::RustlFloat(l0), Self::RustlFloat(r0)) => l0 == r0,
+        (Self::RustlChar(l0), Self::RustlChar(r0)) => l0 == r0,
+        (Self::RustlBool(l0), Self::RustlBool(r0)) => l0 == r0,
+        (Self::RustlString(l0), Self::RustlString(r0)) => l0 == r0,
+        (Self::RustlObject(l0), Self::RustlObject(r0)) =>{
+          l0.as_ptr() == r0.as_ptr()
+        },
+        _ => false,
+    }
+  }
+}
+
 impl RustlV {
   pub fn new_int(i:i32) -> RustlV { RustlV::RustlInt(i) }
   pub fn new_float(f: f32) -> RustlV { RustlV::RustlFloat(f) }
@@ -89,6 +126,20 @@ impl RustlV {
 
   pub fn new_obj() -> RustlV {
     RustlV::RustlObject(Rc::new(RefCell::new(RustlObj::empty())))
+  }
+
+  pub fn new_error_obj(msg:&String, start: usize, end: usize) -> RustlV {
+    let obj = RustlV::new_obj();
+
+    match obj {
+      RustlV::RustlObject(ref robj) => {
+        robj.borrow_mut().set_field("start_pos", RustlV::new_int(start.try_into().unwrap()));
+        robj.borrow_mut().set_field("end_pos", RustlV::new_int(end.try_into().unwrap()));
+        robj.borrow_mut().set_field("msg", RustlV::new_string(msg));
+        obj
+      },
+      _ => obj
+    }
   }
 
   pub fn is_support_add_op(&self) -> bool {
@@ -201,10 +252,16 @@ impl RustlV {
   bool_op_define! {||  bool_or} 
   bool_op_define! {&&  bool_and}
 
-  numeric_op_define! { +  numeric_add }
-  numeric_op_define! { -  numeric_sub }
-  numeric_op_define! { *  numeric_multi }
-  numeric_op_define! { /  numeric_div }
+  numeric_op_define!  { +   numeric_add    }
+  numeric_op_define!  { -   numeric_sub    }
+  numeric_op_define!  { *   numeric_multi  }
+  numeric_op_define!  { /   numeric_div    }
+
+  // cmp
+  numeric_cmp_define! { <   numeric_lt     }
+  numeric_cmp_define! { >   numeric_gt     }
+  numeric_cmp_define! { <=  numeric_le     }
+  numeric_cmp_define! { >=  numeric_ge     }
 }
 
 pub fn rustl_add(l:& RustlV, r:& RustlV) -> Option<RustlV> {

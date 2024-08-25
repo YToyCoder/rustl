@@ -32,11 +32,11 @@ fn define_fn(not_used_arg) {
 print( define_fn() );
 print( !true || (false && false) );
 let k = true && string_variable;
-define_fn(123);
 print(k);
 let obj = {name: \"obj name\", loc_start: 1};
-obj.name = 1;
-print(obj.name);
+let obj2 = {name: \"obj name\", loc_start: 1};
+print(obj < obj);
+define_fn(123);
 ".to_string();
   let code_u8_arr =  unsafe { parse_code.as_bytes_mut() };
   parse_to_token(&mut read_token, code_u8_arr);
@@ -52,7 +52,7 @@ print(obj.name);
   let Some(mut ast) = parser.root else {
     return ();
   };
-  eval_ast(&mut ast);
+  eval_ast(&mut ast, &code_u8_arr);
   // println!("Hello, world!");
 }
 

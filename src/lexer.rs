@@ -17,6 +17,12 @@ pub enum TokenTyp
   TokenSub,             // - 
   TokenMul,             // *
   TokenDiv,             // /
+
+  TokenLt,              // <
+  TokenLe,              // <=
+  TokenGt,              // >
+  TokenGe,              // >=
+
   TokenTrue,            // true
   TokenFalse,           // false
   TokenBoolOR,          // ||
@@ -118,17 +124,21 @@ impl Token
       }
     }
 
-    if Self::next_is(buffer, &[b'|',b'|']) {
-      return Self::only_type_token(TokenTyp::TokenBoolOR, 2);
-    }
-
-    if Self::next_is(buffer, &[b'&',b'&']) {
-      return Self::only_type_token(TokenTyp::TokenBoolAND, 2);
-    }
-
-    if Self::next_is(buffer, &[b'=',b'=']) {
-      return Self::only_type_token(TokenTyp::TokenEq, 2);
-    }
+    // two char
+    // || && ==
+    let _ : Option<i32>= match buffer[..2] {
+      [b'|',b'|'] => 
+        return Self::only_type_token(TokenTyp::TokenBoolOR, 2),
+      [b'&',b'&'] => 
+        return Self::only_type_token(TokenTyp::TokenBoolAND, 2),
+      [b'=',b'='] => 
+        return Self::new_token(TokenTyp::TokenEq, "==", 2),
+      [b'<',b'='] => 
+        return Self::new_token(TokenTyp::TokenLe, "<=", 2),
+      [b'>',b'='] => 
+        return Self::new_token(TokenTyp::TokenGe, ">=", 2),
+      _ => None
+    };
 
     // ctrl char | operator
     match first_char {
@@ -138,6 +148,8 @@ impl Token
       b'/'  => Self::one_char_token(TokenTyp::TokenDiv, first_char),
       b'+'  => Self::one_char_token(TokenTyp::TokenAdd, first_char),
       b'-'  => Self::one_char_token(TokenTyp::TokenSub, first_char),
+      b'<'  => Self::one_char_token(TokenTyp::TokenLt, first_char), 
+      b'>'  => Self::one_char_token(TokenTyp::TokenGt, first_char), 
       b';'  => Self::one_char_token(TokenTyp::TokenStatementEnd, first_char),
       b'('  => Self::one_char_token(TokenTyp::TokenLParenthesis, first_char),
       b')'  => Self::one_char_token(TokenTyp::TokenRParenthesis, first_char),
@@ -156,17 +168,21 @@ impl Token
     Ok((Token::new(tt, "".to_string()),size))
   }
 
+  fn new_token(tt: TokenTyp, str_value:&str, size: usize) -> Result<(Token, usize), ()>  {
+    Ok((Token::new(tt, str_value.to_string()),size))
+  }
+
   fn one_char_token(tt: TokenTyp, c: u8) -> Result<(Token, usize), ()> {
     Ok((Token::new(tt, unsafe { String::from_utf8_unchecked(vec![c]) }), 1))
   }
 
-  fn next_is(buffer:& [u8],cc: &[u8]) -> bool {
-    if cc.len() > buffer.len() {
-      return false;
-    }
+  // fn next_is(buffer:& [u8],cc: &[u8]) -> bool {
+  //   if cc.len() > buffer.len() {
+  //     return false;
+  //   }
 
-    zip(buffer, cc).all(|(a, b)| { a == b })
-  }
+  //   zip(buffer, cc).all(|(a, b)| { a == b })
+  // }
 
   fn char_is_token_name(c: u8) -> bool {
     c.is_ascii_alphanumeric() || c == b'_'

@@ -193,7 +193,7 @@ impl RustlBuiltinFn for RustlFnPrint {
   }
 }
 
-pub fn eval_ast(ast:&mut Expr) -> () {
+pub fn eval_ast(ast:&mut Expr, code: &[u8]) -> () {
   let mut root_scope = GlobalScope::default();
 
   let mut rustl_eval_ctx = RustlCtx::default();
@@ -207,7 +207,22 @@ pub fn eval_ast(ast:&mut Expr) -> () {
   for mut ast_ in statements {
     eval_expression(&mut ast_, &mut root_scope, &mut rustl_eval_ctx);
     if root_scope.has_error() {
-      println!("[rustl][error] {}",root_scope.err.clone().unwrap().to_string());
+      let log = |scope: &GlobalScope| match &scope.err {
+        Some(RustlV::RustlObject(obj)) => {
+          let borrow = obj.borrow_mut();
+          crate::sytax::log_err("[rustl][runtime]",
+            code, 
+            borrow.get_field("start_pos")?.to_int_value()? as usize, 
+            borrow.get_field("end_pos")?.to_int_value()? as usize, 
+            &borrow.get_field("msg")?.to_string() );
+          Some(())
+        },
+        _ => None,
+      };
+      
+      if log(&root_scope).is_none() {
+        println!("[rustl][error] {}",root_scope.err.unwrap().clone().to_string());
+      }
       break;
     }
   }
@@ -234,7 +249,7 @@ fn eval_expression<'a: 'b, 'b >(ast:& Box<Expr>, cur_scope: &'a mut dyn Scope, c
       let local_variable = cur_scope.get_local_variable(name_string).and_then(|v| Some(v.clone()));
       if local_variable.is_none() {
         cur_scope.finish();
-        cur_scope.set_error(&RustlV::new_string(&format!("not found variable {}", name_string_no_borrow)));
+        cur_scope.set_error(&RustlV::new_error_obj(&format!("not found variable {}", name_string_no_borrow), ast.loc.start , ast.loc.end));
       }
       local_variable
     },
@@ -248,8 +263,13 @@ fn eval_expression<'a: 'b, 'b >(ast:& Box<Expr>, cur_scope: &'a mut dyn Scope, c
         "-"   => lhs_value.numeric_sub(&rhs_value),
         "&&"  => lhs_value.bool_and(&rhs_value),
         "||"  => lhs_value.bool_or(&rhs_value),
+        "=="  => Some( RustlV::new_bool(lhs_value == rhs_value)),
+        ">"   => lhs_value.numeric_gt(&rhs_value),
+        ">="  => lhs_value.numeric_ge(&rhs_value),
+        "<"   => lhs_value.numeric_lt(&rhs_value),
+        "<="  => lhs_value.numeric_le(&rhs_value),
         _     => {
-          cur_scope.set_error(&RustlV::new_string(&format!("not support binary operator {}", op_string)));
+          cur_scope.set_error(&RustlV::new_error_obj(&format!("not support binary operator {}", op_string), ast.loc.start , ast.loc.end));
           cur_scope.finish();
           None
         },
@@ -272,6 +292,12 @@ fn eval_expression<'a: 'b, 'b >(ast:& Box<Expr>, cur_scope: &'a mut dyn Scope, c
         // error !
         if r.is_none() && cur_scope.has_error() {
           cur_scope.finish();
+          return None;
+        }
+
+        if r.is_none() {
+          cur_scope.finish();
+          cur_scope.set_error(&RustlV::new_error_obj(&format!("function call arg is None {}", name), ast.loc.start , ast.loc.end));
           return None;
         }
 
@@ -309,7 +335,7 @@ fn eval_expression<'a: 'b, 'b >(ast:& Box<Expr>, cur_scope: &'a mut dyn Scope, c
       let builtin_fn = ctx.builtin_func.get_fn(name);
 
       if builtin_fn.is_none() {
-        cur_scope.set_error(&RustlV::new_string(&format!("not find any function {}", name)));
+        cur_scope.set_error(&RustlV::new_error_obj(&format!("not find any function {}", name), ast.loc.start , ast.loc.end));
         return None;
       }
 
@@ -337,7 +363,7 @@ fn eval_expression<'a: 'b, 'b >(ast:& Box<Expr>, cur_scope: &'a mut dyn Scope, c
         "!" => eval_expression(expr, cur_scope, ctx)?.bool_not(),
         _ => {
           cur_scope.finish();
-          cur_scope.set_error(&RustlV::new_string(&format!("not support unary operator{}", unary_op.clone())));
+          cur_scope.set_error(&RustlV::new_error_obj(&format!("not support unary operator{}", unary_op.clone()), ast.loc.start , ast.loc.end));
           None
         } 
       }
@@ -370,7 +396,7 @@ fn eval_expression<'a: 'b, 'b >(ast:& Box<Expr>, cur_scope: &'a mut dyn Scope, c
           }
         _ => {
           cur_scope.finish();
-          cur_scope.set_error(&RustlV::new_string(&format!("try to set field in which not object")));
+          cur_scope.set_error(&RustlV::new_error_obj(&format!("try to set field in which not object"), ast.loc.start , ast.loc.end));
           None
         },
       }
@@ -379,7 +405,7 @@ fn eval_expression<'a: 'b, 'b >(ast:& Box<Expr>, cur_scope: &'a mut dyn Scope, c
       let Some(value) = eval_expression(expr, cur_scope, ctx) else {
         if !cur_scope.finished() {
           cur_scope.finish();
-          cur_scope.set_error(&RustlV::new_string(&format!("field get error, expression eval error")));
+          cur_scope.set_error(&RustlV::new_error_obj(&format!("field get error, expression eval error"), ast.loc.start , ast.loc.end));
         }
         return None
       };
@@ -391,7 +417,7 @@ fn eval_expression<'a: 'b, 'b >(ast:& Box<Expr>, cur_scope: &'a mut dyn Scope, c
                 .and_then(|v| Some(v.clone())),
         _ => {
           cur_scope.finish();
-          cur_scope.set_error(&RustlV::new_string(&format!("try to get field in which not object")));
+          cur_scope.set_error(&RustlV::new_error_obj(&format!("try to get field in which not object"), ast.loc.start , ast.loc.end));
           None
         },
       }

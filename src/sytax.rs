@@ -168,6 +168,62 @@ impl <'a> ParsingCtx<'a> {
 
 type ParsingResult = Result<Box<Expr>, ParsingErr> ;
 
+pub fn log_err(prefix: &str,code: &[u8], start: usize, end: usize, msg: &String) {
+  let mut nstart = start;
+  let mut eol = false;
+  loop {
+    if nstart == 0 {
+      break;
+    }
+
+    if code[nstart] == b'\n' {
+      if eol {
+        break;
+      }
+      eol = true;
+    }
+
+    nstart -= 1;
+  }
+
+  eol = false;
+  let mut nend = end;
+  loop {
+    if nend >= code.len() {
+      break;
+    }
+
+    if code[nend] == b'\n' {
+      if eol {
+        break;
+      }
+      eol = true;
+    }
+
+    nend += 1;
+  }
+
+  let err_code = &code[nstart..nend];
+  let error_line = err_code
+    .lines()
+    .into_iter();
+
+  println!("{} {},{}",prefix,start, end);
+  let mut position = 0;
+  let prefix_len = start - nstart;
+  for line in error_line {
+    let Ok(line_string) = line else {
+      break;
+    };
+    println!("{}", line_string);
+    if position < prefix_len && position + line_string.len() >= prefix_len {
+      println!("{}^{}", " ".repeat(prefix_len - position), msg);
+    }
+    position += line_string.len();
+  }
+  println!("*********************************************************");
+}
+
 impl Parser
 {
   pub fn new() -> Parser
@@ -191,33 +247,33 @@ impl Parser
         Ok(ast) => 
           statements.push(ast),
         Err((_msg, loc)) => {
-
-          let start = 
-            if loc.start > 20 { loc.start - 20 } 
-            else { loc.start };
+          log_err("[rustl][error] parsing error in",code, loc.start, loc.end, &_msg);
+          // let start = 
+          //   if loc.start > 20 { loc.start - 20 } 
+          //   else { loc.start };
           
-          let end = 
-            if loc.end + 20  < code.len() { loc.end + 20 } 
-            else { loc.end };
-          let err_code = &code[start..end];
-          let error_line = err_code
-            .lines()
-            .into_iter();
+          // let end = 
+          //   if loc.end + 20  < code.len() { loc.end + 20 } 
+          //   else { loc.end };
+          // let err_code = &code[start..end];
+          // let error_line = err_code
+          //   .lines()
+          //   .into_iter();
 
-          println!("[rustl][error] parsing error in {}-{}\n", loc.start, loc.end);
-          println!("*********************************************************");
-          let mut position = 0;
-          for line in error_line {
-            let Ok(line_string) = line else {
-              break;
-            };
-            println!("{}", line_string);
-            if position < 20 && position + line_string.len() >= 20 {
-              println!("{}^{}", " ".repeat(20 - position), _msg);
-            }
-            position += line_string.len();
-          }
-          println!("*********************************************************");
+          // println!("[rustl][error] parsing error in {}-{}\n", loc.start, loc.end);
+          // println!("*********************************************************");
+          // let mut position = 0;
+          // for line in error_line {
+          //   let Ok(line_string) = line else {
+          //     break;
+          //   };
+          //   println!("{}", line_string);
+          //   if position < 20 && position + line_string.len() >= 20 {
+          //     println!("{}^{}", " ".repeat(20 - position), _msg);
+          //   }
+          //   position += line_string.len();
+          // }
+          // println!("*********************************************************");
           return Err(())
         }
       }
@@ -317,8 +373,9 @@ impl Parser
     Ok(lhs)
   }
 
+  // && || 
   fn parse_bool_binary(&mut self, ctx: &mut ParsingCtx) -> ParsingResult {
-    let mut lhs = self.parse_binary_expression(ctx)?;
+    let mut lhs = self.parse_comp(ctx)?;
 
     let is_fit_token = 
       |tk: &Token| {
@@ -346,7 +403,7 @@ impl Parser
 
       match token_typ {
         lexer::TokenTyp::TokenBoolAND => {
-          let rhs = self.parse_expression_one_token(ctx)?;
+          let rhs = self.parse_comp(ctx)?;
           lhs = Self::boxed_expression(AstKind::BinaryOp("&&".to_string(), lhs, rhs), location);
         },
         lexer::TokenTyp::TokenBoolOR  => {
@@ -401,6 +458,14 @@ impl Parser
     Ok(lhs)
   }
 
+  // $name
+  // $expression.$name
+  // $numeric_literal
+  // $char_literal
+  // not 
+  // $string_literal
+  // $bool _literal : true | false
+  // ($expression)
   fn parse_expression_one_token(&mut self, ctx: &mut ParsingCtx) -> ParsingResult {
     let Some(token) = ctx.get_cur_token() else {
       return Self::err(&"first token not exists on parsing one token".to_string(), ctx.get_closed_token_position().unwrap_or_default());
@@ -544,9 +609,6 @@ impl Parser
 
       fn_statements.push(self.parse_statement_in_fn(ctx)?);
 
-      // ctx.expect_cur_token(TokenTyp::TokenStatementEnd)?;
-      // ctx.consume_cur_token();
-
       if ctx.next_token_typ(&[TokenTyp::TokenRBrace]) {
         break;
       }
@@ -581,7 +643,6 @@ impl Parser
           self.parse_fn_call(ctx)
         }else {
           let prefix_res = self.parse_expression(ctx);
-
           if ctx.next_token_typ(&[TokenTyp::TokenDot]) {
             self.parse_field_set(ctx, prefix_res?)
           }
@@ -596,6 +657,7 @@ impl Parser
     Ok(res) 
   }
 
+  //$args : ($name, ...)
   fn parse_fn_decl_arg(&mut self , ctx: &mut ParsingCtx)  -> ParsingResult {
     let location = ctx.expect_cur_token(TokenTyp::TokenLParenthesis)?.location;
     ctx.consume_cur_token();
@@ -668,6 +730,7 @@ impl Parser
     Ok(Self::boxed_expression( AstKind::FnCall(call_identifier, call_args), location))
   }
 
+  // {$name: $expression, ... }
   fn parse_object_literal(&mut self, ctx: &mut ParsingCtx) -> ParsingResult {
     let start_location = ctx.expect_cur_token(TokenTyp::TokenLBrace)?.location.start;
     ctx.consume_cur_token();
@@ -703,6 +766,7 @@ impl Parser
     Ok(Self::boxed_expression( AstKind::ObjectLiteral(fields), Location{ start: start_location, end: end_location}))
   }
 
+  // $expression . $name = $expression
   fn parse_field_set(&mut self, ctx: &mut ParsingCtx, prefix: Box<Expr>) -> ParsingResult {
     let location = ctx.expect_cur_token(TokenTyp::TokenDot)?.location;
     ctx.consume_cur_token();
@@ -717,4 +781,35 @@ impl Parser
   }
 
   // todo: parsing == , <= , >=
+  fn parse_comp(&mut self, ctx:&mut ParsingCtx) -> ParsingResult {
+    let mut lhs = self.parse_binary_expression(ctx)?;
+
+    let is_comp_token = |tt: TokenTyp| 
+      match tt {
+        TokenTyp::TokenEq |
+        TokenTyp::TokenLe |
+        TokenTyp::TokenLt |
+        TokenTyp::TokenGe |
+        TokenTyp::TokenGt   => true,
+        _ => false
+      };
+
+    if !ctx.has_token() {
+      return Ok(lhs);
+    }
+
+    // compare operator
+    let token = ctx.get_cur_token().unwrap();
+    let operator = token.token_value.clone();
+    let location = token.location;
+    if !is_comp_token(token.token_t) {
+      return Ok(lhs);
+    }
+    ctx.consume_cur_token();
+
+    let rhs = self.parse_binary_expression(ctx)?;
+    lhs = Self::boxed_expression(AstKind::BinaryOp(operator, lhs, rhs), location);
+
+    Ok(lhs)
+  }
 }
