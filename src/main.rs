@@ -5,6 +5,8 @@ use runtime::eval_ast;
 pub mod lexer;
 pub mod sytax;
 pub mod runtime;
+pub mod rustlv;
+
 #[macro_use]
 extern crate lazy_static;
 
