@@ -62,6 +62,8 @@ pub enum AstKind {
   ObjectLiteral(Vec<(String,Box<Expr>)>),
   FieldSet(Box<Expr>,String, Box<Expr>),
   FieldGet(Box<Expr>, String),
+  IfElse(Box<Expr>, Box<Expr>, Option<Box<Expr>>), // condition, code-block, $else
+  CodeBlock(Vec<Box<Expr>>),                // code-block: statements
   LiteralTrue,
   LiteralFalse,
   AstNull
@@ -248,32 +250,6 @@ impl Parser
           statements.push(ast),
         Err((_msg, loc)) => {
           log_err("[rustl][error] parsing error in",code, loc.start, loc.end, &_msg);
-          // let start = 
-          //   if loc.start > 20 { loc.start - 20 } 
-          //   else { loc.start };
-          
-          // let end = 
-          //   if loc.end + 20  < code.len() { loc.end + 20 } 
-          //   else { loc.end };
-          // let err_code = &code[start..end];
-          // let error_line = err_code
-          //   .lines()
-          //   .into_iter();
-
-          // println!("[rustl][error] parsing error in {}-{}\n", loc.start, loc.end);
-          // println!("*********************************************************");
-          // let mut position = 0;
-          // for line in error_line {
-          //   let Ok(line_string) = line else {
-          //     break;
-          //   };
-          //   println!("{}", line_string);
-          //   if position < 20 && position + line_string.len() >= 20 {
-          //     println!("{}^{}", " ".repeat(20 - position), _msg);
-          //   }
-          //   position += line_string.len();
-          // }
-          // println!("*********************************************************");
           return Err(())
         }
       }
@@ -306,6 +282,7 @@ impl Parser
       lexer::TokenTyp::TokenLet => self.parse_decl(ctx),
       lexer::TokenTyp::TokenFnDecl => self.parse_fn_decl(ctx),
       lexer::TokenTyp::TokenRustlAnnotation => self.parse_rustl_annotation(ctx),
+      lexer::TokenTyp::TokenIf => self.parse_if_statement(ctx),
       _ => {
         if ctx.next_token_typ(&[TokenTyp::TokenName, TokenTyp::TokenLParenthesis]) {
           // parse to call
@@ -322,7 +299,8 @@ impl Parser
     }?;
 
     let need_statement_end =  {
-      if token_typ == lexer::TokenTyp::TokenRustlAnnotation {
+      if token_typ == lexer::TokenTyp::TokenRustlAnnotation  
+          ||  token_typ == lexer::TokenTyp::TokenIf {
         false
       } else {
         match res.kind {
@@ -631,6 +609,7 @@ impl Parser
     let token_typ = token.token_t;
     let res =  match token_typ {
       lexer::TokenTyp::TokenLet => self.parse_decl(ctx),
+      lexer::TokenTyp::TokenIf => self.parse_if_statement(ctx),
       lexer::TokenTyp::TokenReturn => 
         self.parse_return_expression(ctx),
       lexer::TokenTyp::TokenFnDecl => 
@@ -651,8 +630,10 @@ impl Parser
       },
     }?;
 
-    ctx.expect_cur_token(TokenTyp::TokenStatementEnd)?;
-    ctx.consume_cur_token();
+    if token_typ != lexer::TokenTyp::TokenIf {
+      ctx.expect_cur_token(TokenTyp::TokenStatementEnd)?;
+      ctx.consume_cur_token();
+    }
 
     Ok(res) 
   }
@@ -811,5 +792,79 @@ impl Parser
     lhs = Self::boxed_expression(AstKind::BinaryOp(operator, lhs, rhs), location);
 
     Ok(lhs)
+  }
+
+  // if else 
+  fn parse_if_statement(&mut self, ctx: &mut ParsingCtx) -> ParsingResult {
+    let start_location = ctx.expect_cur_token(TokenTyp::TokenIf)?.location;
+    ctx.consume_cur_token();
+
+    let condition = self.parse_if_condition(ctx)?;
+
+    let code_block = self.parse_code_block(ctx)?;
+    let mut end_position = code_block.loc.end;
+
+    if !ctx.next_token_typ(&[TokenTyp::TokenElse]) {
+      return Ok(Self::boxed_expression(
+                AstKind::IfElse(condition, code_block, None), 
+                Location{ start: start_location.start, end: end_position}))
+    }
+
+    // else {}
+    if !ctx.next_token_typ(&[TokenTyp::TokenElse, TokenTyp::TokenIf]) {
+      ctx.consume_cur_token();
+      let else_block = self.parse_code_block(ctx)?;
+      end_position = else_block.loc.end;
+      return Ok(Self::boxed_expression(
+        AstKind::IfElse(condition, code_block, Some(else_block)), 
+        Location{ start: start_location.start, end: end_position}))
+    }
+
+    // else if
+    ctx.consume_cur_token(); // else 
+
+    let new_if_statement = self.parse_if_statement(ctx)?;
+    end_position = new_if_statement.loc.end;
+    Ok(Self::boxed_expression(
+      AstKind::IfElse(condition, code_block, Some(new_if_statement)), 
+      Location{ start: start_location.start, end: end_position}))
+  }
+
+  fn parse_code_block(&mut self, ctx: &mut ParsingCtx) -> ParsingResult {
+    let start_location = ctx.expect_cur_token(TokenTyp::TokenLBrace)?.location;
+    ctx.consume_cur_token();
+
+    let mut statements : Vec<Box<Expr>> = vec![];
+
+    loop {
+      if !ctx.has_token() {
+        break;
+      }
+
+      if ctx.next_token_typ(&[TokenTyp::TokenRBrace]) {
+        break;
+      }
+
+      statements.push(self.parse_statement_in_fn(ctx)?);
+
+    }
+
+    let end_location = ctx.expect_cur_token(TokenTyp::TokenRBrace)?.location;
+    ctx.consume_cur_token();
+
+    Ok(Self::boxed_expression(AstKind::CodeBlock(statements), Location { start: start_location.start, end: end_location.end }))
+  }
+
+  fn parse_if_condition(&mut self, ctx: &mut ParsingCtx) -> ParsingResult {
+    let start_location = ctx.expect_cur_token(TokenTyp::TokenLParenthesis)?.location;
+    ctx.consume_cur_token();
+
+    let mut condition_expression = self.parse_comp(ctx)?;
+
+    let end_location = ctx.expect_cur_token(TokenTyp::TokenRParenthesis)?.location;
+    ctx.consume_cur_token();
+
+    condition_expression.loc = Location{ start: start_location.start, end: end_location.end};
+    Ok(condition_expression)
   }
 }

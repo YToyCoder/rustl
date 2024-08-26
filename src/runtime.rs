@@ -51,8 +51,6 @@ struct FunctionScope<'a>
 }
 
 impl<'a> Scope for FunctionScope<'a> {
-
-
   fn do_fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
       f.debug_struct("FunctionScope").field("stack_value", &self.stack_value).finish()
   }
@@ -86,6 +84,8 @@ impl<'a> Scope for FunctionScope<'a> {
   }
 
 }
+
+
 
 #[derive(Debug)]
 struct GlobalScope {
@@ -421,6 +421,49 @@ fn eval_expression<'a: 'b, 'b >(ast:& Box<Expr>, cur_scope: &'a mut dyn Scope, c
           None
         },
       }
+    },
+    AstKind::IfElse(condition, statements, else_statement) => {
+      let condition_result = eval_expression(condition, cur_scope, ctx)?;
+
+      if condition_result.to_bool()? {
+        match &statements.kind {
+          AstKind::CodeBlock(_) => {
+            eval_expression(statements, cur_scope, ctx)
+          },
+          _ => None
+        }
+      } 
+      else if else_statement.is_some() {
+        eval_expression(&else_statement.as_ref().unwrap(), cur_scope, ctx)
+      }
+      else {
+        None
+      }
+    },
+    AstKind::CodeBlock(statements) => {
+      let mut new_scope = FunctionScope { 
+        stack_value:Default::default(), 
+        parent_scope: cur_scope, 
+        return_value: ctx.get_nil().clone(), 
+        err: None, 
+        finished_flag: false
+      };
+
+      for ast in statements {
+        // error accure!
+        if eval_expression(&ast, &mut new_scope, ctx).is_none() && new_scope.has_error() {
+          cur_scope.set_error(&new_scope.err.unwrap());
+          cur_scope.finish();
+          return None;
+        }
+
+        // return expression
+        if new_scope.finished() {
+          break;
+        }
+      }
+
+      None
     },
   }
 }

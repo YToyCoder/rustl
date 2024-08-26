@@ -5,10 +5,10 @@ pub enum TokenTyp
   TokenLet,
   TokenName,
   TokenNumLiteral,
-  TokenLParenthesis, // (
-  TokenRParenthesis, // )
-  TokenLBrace, // {
-  TokenRBrace, // }
+  TokenLParenthesis,    // (
+  TokenRParenthesis,    // )
+  TokenLBrace,          // {
+  TokenRBrace,          // }
   TokenEq,              // ==
   TokenAssign,          // =
   TokenBitOr,           // |
@@ -23,15 +23,18 @@ pub enum TokenTyp
   TokenGt,              // >
   TokenGe,              // >=
 
+  TokenIf,              // if
+  TokenElse,            // else
+
   TokenTrue,            // true
   TokenFalse,           // false
   TokenBoolOR,          // ||
   TokenBoolNOT,         // !
   TokenBoolAND,         // &&
-  TokenStatementEnd,
+  TokenStatementEnd,    // ;
   TokenRustlAnnotation, // @$name
   TokenReturn,          // return
-  TokenFnDecl,
+  TokenFnDecl,          // fn
   TokenDot,             // .
   TokenComma,           // ,
   TokenColon,           // :
@@ -73,6 +76,8 @@ lazy_static!  {
     (String::from("true")   , TokenTyp::TokenTrue   ),
     (String::from("false")  , TokenTyp::TokenFalse  ),
     (String::from("return") , TokenTyp::TokenReturn ),
+    (String::from("if")     , TokenTyp::TokenIf     ),
+    (String::from("else")   , TokenTyp::TokenElse   ),
   ]);
 }
 

@@ -26,6 +26,8 @@ print(d);
 print(c);
 fn define_fn(not_used_arg) {
   let variable_in_fn = 3.1415926 * 1000;
+  if (true) { } 
+  else {}
   print(\"Hello, function definition!\");
   return variable_in_fn;
 }
@@ -35,6 +37,11 @@ let k = true && string_variable;
 print(k);
 let obj = {name: \"obj name\", loc_start: 1};
 let obj2 = {name: \"obj name\", loc_start: 1};
+if (true) {
+  print(\"in if true\");
+}
+else if (not) { 
+}
 print(obj < obj);
 define_fn(123);
 ".to_string();
