@@ -55,7 +55,7 @@ define_fn(123);
     return ();
   }
 
-  // println!("ast: \n{:#?}", parser.root);
+  println!("ast: \n{:#?}", parser.root);
   let Some(mut ast) = parser.root else {
     return ();
   };

@@ -1,4 +1,4 @@
-use std::io::BufRead;
+use std::{fmt::Debug, io::BufRead};
 
 use crate::lexer::{self, Token, TokenTyp, Location};
 
@@ -69,10 +69,16 @@ pub enum AstKind {
   AstNull
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Expr {
   pub kind: AstKind,
   pub loc: lexer::Location,
+}
+
+impl Debug for Expr {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("Expr").field("kind", &self.kind).finish()
+  }
 }
 
 impl Expr {
