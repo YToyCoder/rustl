@@ -94,6 +94,7 @@ pub enum RustlV {
   RustlBool(bool),
   RustlString(String),
   RustlObject(Rc<RefCell<RustlObj>>),
+  RustlArr(Rc<RefCell<Vec<RustlV>>>)
 }
 
 impl PartialEq for RustlV {
@@ -123,6 +124,8 @@ impl RustlV {
   pub fn new_char(c: char) -> RustlV {
     RustlV::RustlChar(c)
   }
+
+  pub fn new_arr() -> RustlV { RustlV::RustlArr(Rc::new(RefCell::new(vec![]))) }
 
   pub fn new_obj() -> RustlV {
     RustlV::RustlObject(Rc::new(RefCell::new(RustlObj::empty())))
@@ -230,6 +233,13 @@ impl RustlV {
         obj.borrow().to_string(),
       RustlV::RustlString(string) => 
         string.to_string(),
+      RustlV::RustlArr(arr) => {
+        let mut out : String = "[".to_string();
+        for el in arr.borrow().iter(){
+          out += &format!("{},",el.to_string()) 
+        }
+        out + "]"
+      },
     }
   }
 
@@ -242,6 +252,7 @@ impl RustlV {
       RustlV::RustlObject(_) => true,
       RustlV::RustlString(string) => 
         string.is_empty(),
+      RustlV::RustlArr(_) => true,
     })
   }
 

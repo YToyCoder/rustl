@@ -187,10 +187,25 @@ impl RustlBuiltinFn for RustlFnPrint {
   fn call(&mut self, args:& Vec<RustlV>) -> RustlV {
     if args.len() == 0 {
       println!("");
+      return self.rustl_nil.clone();
     }
     println!("{}", args.get(0).unwrap().to_string());
     self.rustl_nil.clone()
   }
+}
+
+struct RustlFnNewArr;
+
+impl RustlBuiltinFn for RustlFnNewArr {
+    fn call(&mut self, args:& Vec<RustlV>) -> RustlV {
+      let new_arr = RustlV::new_arr();
+      if let RustlV::RustlArr(ref arr) = new_arr  {
+        for arg in args {
+          arr.borrow_mut().push(arg.clone());
+        }
+      };
+      new_arr
+    }
 }
 
 pub fn eval_ast(ast:&mut Expr, code: &[u8]) -> () {
@@ -203,6 +218,8 @@ pub fn eval_ast(ast:&mut Expr, code: &[u8]) -> () {
 
   let rustl_print = RustlFnPrint{ rustl_nil: rustl_eval_ctx.get_nil().into() };
   rustl_eval_ctx.builtin_func.register(&"print".to_string(), Box::new(rustl_print));
+  let rustl_arr_new = RustlFnNewArr;
+  rustl_eval_ctx.builtin_func.register(&"array".to_string(),Box::new(rustl_arr_new));
 
   for mut ast_ in statements {
     eval_expression(&mut ast_, &mut root_scope, &mut rustl_eval_ctx);

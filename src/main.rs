@@ -42,7 +42,8 @@ if (true) {
 }
 else if (not) { 
 }
-print(obj < obj);
+let arr = array(1) ;
+print( arr );
 define_fn(123);
 ".to_string();
   let code_u8_arr =  unsafe { parse_code.as_bytes_mut() };
