@@ -359,16 +359,13 @@ fn eval_expression<'a: 'b, 'b >(ast:& Box<Expr>, cur_scope: &'a mut dyn Scope, c
       Some(builtin_fn.unwrap().call(&args_value))
     },
     AstKind::FnDefine(name, args, statements) => {
-      let arg_list: Option<Vec<String>> = match &args.kind {
-        AstKind::FnDeclArgs(arg_expr) => {
-          Some(arg_expr.iter().map_while(|expr| { match &expr.kind {
-            AstKind::AstName(name) => Some(name.clone()) ,
-            _ => None
-          } }).collect())
-        },
-        _ => None
+      if let AstKind::FnDeclArgs(arg_expr) = &args.kind {
+        let arg_list = arg_expr.iter().map_while(|expr| { match &expr.kind {
+          AstKind::AstName(name) => Some(name.clone()) ,
+          _ => None
+        } }).collect();
+        cur_scope.add_fn_definition(name, &arg_list, statements);
       };
-      cur_scope.add_fn_definition(name, &arg_list?, statements);
       None
     },
     AstKind::LiteralTrue => 
@@ -392,13 +389,12 @@ fn eval_expression<'a: 'b, 'b >(ast:& Box<Expr>, cur_scope: &'a mut dyn Scope, c
     } ,
     AstKind::ObjectLiteral(_fields) => {
       let mut new_object = RustlV::new_obj();
-      let RustlV::RustlObject(obj) = &mut new_object else {
-        // should not reach here
-        return None
+      if let RustlV::RustlObject(obj) = &mut new_object {
+        for (field_name, value) in _fields {
+          obj.borrow_mut().set_field(field_name, eval_expression(value, cur_scope, ctx)? )
+        }
       };
-      for (field_name, value) in _fields {
-        obj.borrow_mut().set_field(field_name, eval_expression(value, cur_scope, ctx)? )
-      }
+
       Some(new_object)
     },
     AstKind::FieldSet(prefix, field_name, value) => {
@@ -443,12 +439,10 @@ fn eval_expression<'a: 'b, 'b >(ast:& Box<Expr>, cur_scope: &'a mut dyn Scope, c
       let condition_result = eval_expression(condition, cur_scope, ctx)?;
 
       if condition_result.to_bool()? {
-        match &statements.kind {
-          AstKind::CodeBlock(_) => {
-            eval_expression(statements, cur_scope, ctx)
-          },
-          _ => None
+        if let AstKind::CodeBlock(_) = &statements.kind  {
+          eval_expression(statements, cur_scope, ctx);
         }
+        None
       } 
       else if else_statement.is_some() {
         eval_expression(&else_statement.as_ref().unwrap(), cur_scope, ctx)
